@@ -1,9 +1,7 @@
 """
 场景设置相关 action
 
-- select_map_and_start_point  切换地图和起点 (可单独切起点)
-- confirm_scene               确认场景设置, 发起点坐标给平台
-- set_condition               切换工况 (下拉框)
+- prepare_test_scene          切换工况/地图/起点并确认生效
 - get_current_scene           查询当前场景设置
 """
 
@@ -46,10 +44,23 @@ def register(registry, ctx):
                 return i
         return -1
 
-    def select_map_and_start_point(map_name: str = None,
-                                   start_point_name: str = None) -> str:
+    def prepare_test_scene(condition_name: str = None,
+                           map_name: str = None,
+                           start_point_name: str = None,
+                           confirm: bool = True) -> str:
         ui = ctx.ui
         msgs = []
+
+        if condition_name is not None:
+            if not hasattr(ui, 'condition_combo'):
+                return "condition_combo 未就绪。"
+            names = [ui.condition_combo.itemText(i)
+                     for i in range(ui.condition_combo.count())]
+            resolved, err = fuzzy_resolve(condition_name, names)
+            if err:
+                return err + f" 可用工况: {names}"
+            ui.condition_combo.setCurrentText(resolved)
+            msgs.append(f"工况切换为: {resolved}")
 
         if map_name is not None:
             idx, _data = _find_map(ui, map_name)
@@ -67,66 +78,34 @@ def register(registry, ctx):
             msgs.append(f"起点切换为: {ui.start_point_combo.currentText()}")
 
         if not msgs:
-            return "请至少指定 map_name 或 start_point_name。"
-        return "; ".join(msgs) + " (未发送,需要调用 confirm_scene 才会生效)"
+            return "请至少指定 condition_name、map_name 或 start_point_name 中的一项。"
+
+        if confirm:
+            try:
+                ui.confirm_scenario_settings()
+                msgs.append("场景已确认并下发到平台")
+            except Exception as e:
+                msgs.append(f"场景确认失败: {e}")
+        else:
+            msgs.append("当前仅更新选择,尚未确认生效")
+
+        return "；".join(msgs)
 
     registry.register(
-        name="select_map_and_start_point",
-        description="在场景设置中选择地图和/或起点。只是改动选项,不发送任何指令。"
-                    "要让更改生效,需要再调用 confirm_scene。",
+        name="prepare_test_scene",
+        description="准备试验场景。可统一设置工况、地图和起点,"
+                    "并默认自动确认生效、下发起点坐标和 cueing 配置。",
         params_schema={
             "type": "object",
             "properties": {
+                "condition_name":    {"type": "string", "description": "工况名称"},
                 "map_name":          {"type": "string", "description": "地图名称"},
                 "start_point_name":  {"type": "string", "description": "起点名称"},
+                "confirm":           {"type": "boolean", "description": "是否立即确认生效,默认 true"},
             },
             "required": []
         },
-        callback=select_map_and_start_point,
-    )
-
-    # -----------------------------------------------------------------------
-
-    def confirm_scene() -> str:
-        try:
-            ctx.ui.confirm_scenario_settings()
-            return "已确认场景设置,起点坐标已发送到平台,体感方案已按工况更新。"
-        except Exception as e:
-            return f"确认场景设置失败: {e}"
-
-    registry.register(
-        name="confirm_scene",
-        description="确认当前选择的地图和起点,把起点坐标发送给平台,"
-                    "并根据选择的起点自动更新体感(cueing)方案。",
-        params_schema={"type": "object", "properties": {}, "required": []},
-        callback=confirm_scene,
-    )
-
-    # -----------------------------------------------------------------------
-
-    def set_condition(condition_name: str) -> str:
-        ui = ctx.ui
-        if not hasattr(ui, 'condition_combo'):
-            return "condition_combo 未就绪。"
-        names = [ui.condition_combo.itemText(i)
-                 for i in range(ui.condition_combo.count())]
-        resolved, err = fuzzy_resolve(condition_name, names)
-        if err:
-            return err + f" 可用工况: {names}"
-        ui.condition_combo.setCurrentText(resolved)
-        return f"工况已切换为: {resolved}"
-
-    registry.register(
-        name="set_condition",
-        description="切换 CarSim 仿真工况(condition_combo 下拉框)。",
-        params_schema={
-            "type": "object",
-            "properties": {
-                "condition_name": {"type": "string", "description": "工况名称"}
-            },
-            "required": ["condition_name"]
-        },
-        callback=set_condition,
+        callback=prepare_test_scene,
     )
 
     # -----------------------------------------------------------------------

@@ -3,13 +3,8 @@
 
 包含:
 - select_vehicle            切换车型
-- select_front_spring       选择前左/整体弹簧
-- select_rear_spring        选择后左/整体弹簧
-- select_front_right_spring 选择前右弹簧(仅左右独立车型)
-- select_rear_right_spring  选择后右弹簧(仅左右独立车型)
-- select_front_antiroll     选择前稳定杆
-- select_rear_antiroll      选择后稳定杆
-- refresh_tuning_params     重新读取样件列表
+- set_spring                统一设置前/后/左/右弹簧
+- set_antiroll_bar          统一设置前/后稳定杆
 - get_current_setup         查询当前调校状态
 """
 
@@ -22,9 +17,9 @@ from ._helpers import require_not_recording, fuzzy_resolve
 
 def register(registry, ctx):
     _register_select_vehicle(registry, ctx)
-    _register_spring_actions(registry, ctx)
-    _register_antiroll_actions(registry, ctx)
-    _register_misc(registry, ctx)
+    _register_spring_action(registry, ctx)
+    _register_antiroll_action(registry, ctx)
+    _register_get_current_setup(registry, ctx)
 
 
 # ---------------------------------------------------------------------------
@@ -81,10 +76,10 @@ def _register_select_vehicle(registry, ctx):
 
 
 # ---------------------------------------------------------------------------
-# 弹簧 (4 个 action: 前/后 x 左-整体/右)
+# 弹簧
 # ---------------------------------------------------------------------------
 
-def _register_spring_actions(registry, ctx):
+def _register_spring_action(registry, ctx):
 
     def _select_spring_generic(page: int, blue_link: str, ui_name_attr: str,
                                ui_button_attr: str, ui_spin_attr: str,
@@ -135,83 +130,29 @@ def _register_spring_actions(registry, ctx):
 
         return f"已选择{side_label}弹簧: {spring_name}"
 
-    # 前左/整体
     registry.register(
-        name="select_front_spring",
-        description="选择前轮(左侧或整体,取决于车型)弹簧。可输入名称或刚度数值。",
+        name="set_spring",
+        description="统一设置弹簧。支持 position=front/rear, "
+                    "side=left/right/both。可输入弹簧名称或刚度数值。"
+                    "对于不分左右的车型, side 默认使用 both。"
+                    "对于左右独立车型, side=left/right 用于单侧设置, side=both 会同时设置左右。",
         params_schema={
             "type": "object",
             "properties": {
+                "position": {"type": "string", "enum": ["front", "rear"],
+                             "description": "前轴或后轴"},
+                "side": {"type": "string", "enum": ["left", "right", "both"],
+                         "description": "左/右/双侧, 默认 both"},
                 "spring_name": {"type": "string", "description": "弹簧名称或刚度数值"}
             },
-            "required": ["spring_name"]
+            "required": ["position", "spring_name"]
         },
-        callback=lambda spring_name: _select_spring_generic(
-            page=1, blue_link='#BlueLink0',
-            ui_name_attr='frontSpringName',
-            ui_button_attr='select_frontSpring_button',
-            ui_spin_attr='frontSpringEditText',
-            side_label='前', spring_name=spring_name
-        ),
-    )
-
-    # 后左/整体
-    registry.register(
-        name="select_rear_spring",
-        description="选择后轮(左侧或整体,取决于车型)弹簧。可输入名称或刚度数值。",
-        params_schema={
-            "type": "object",
-            "properties": {
-                "spring_name": {"type": "string", "description": "弹簧名称或刚度数值"}
-            },
-            "required": ["spring_name"]
-        },
-        callback=lambda spring_name: _select_spring_generic(
-            page=2, blue_link='#BlueLink0',
-            ui_name_attr='rearSpringName',
-            ui_button_attr='select_rearSpring_button',
-            ui_spin_attr='rearSpringEditText',
-            side_label='后', spring_name=spring_name
-        ),
-    )
-
-    # 前右
-    registry.register(
-        name="select_front_right_spring",
-        description="选择前右弹簧(仅左右独立车型可用;不分左右的车型会报错)。",
-        params_schema={
-            "type": "object",
-            "properties": {
-                "spring_name": {"type": "string", "description": "弹簧名称"}
-            },
-            "required": ["spring_name"]
-        },
-        callback=lambda spring_name: _select_spring_generic(
-            page=1, blue_link='#BlueLink3',
-            ui_name_attr='frontRightSpringName',
-            ui_button_attr='select_frontRightSpring_button',
-            ui_spin_attr='_noop',
-            side_label='前右', spring_name=spring_name
-        ),
-    )
-
-    # 后右
-    registry.register(
-        name="select_rear_right_spring",
-        description="选择后右弹簧(仅左右独立车型可用;不分左右的车型会报错)。",
-        params_schema={
-            "type": "object",
-            "properties": {
-                "spring_name": {"type": "string", "description": "弹簧名称"}
-            },
-            "required": ["spring_name"]
-        },
-        callback=lambda spring_name: _select_spring_generic(
-            page=2, blue_link='#BlueLink3',
-            ui_name_attr='rearRightSpringName',
-            ui_button_attr='select_rearRightSpring_button',
-            ui_spin_attr='_noop',
-            side_label='后右', spring_name=spring_name
+        callback=lambda position, spring_name, side="both": _set_spring(
+            ctx,
+            _select_spring_generic,
+            position=position,
+            side=side,
+            spring_name=spring_name,
         ),
     )
 
@@ -220,7 +161,7 @@ def _register_spring_actions(registry, ctx):
 # 稳定杆
 # ---------------------------------------------------------------------------
 
-def _register_antiroll_actions(registry, ctx):
+def _register_antiroll_action(registry, ctx):
 
     def _select_antiroll(is_front: bool, antiroll_name: str) -> str:
         side = "前" if is_front else "后"
@@ -272,29 +213,21 @@ def _register_antiroll_actions(registry, ctx):
         return f"已选择{side}轮稳定杆: {antiroll_name}"
 
     registry.register(
-        name="select_front_antiroll",
-        description="选择前轮稳定杆(防倾杆)。",
+        name="set_antiroll_bar",
+        description="统一设置前/后防倾杆(稳定杆)或滚转刚度相关数据集。"
+                    "通过 position=front/rear 指定前后轴。",
         params_schema={
             "type": "object",
             "properties": {
+                "position": {"type": "string", "enum": ["front", "rear"],
+                             "description": "前轴或后轴"},
                 "antiroll_name": {"type": "string", "description": "稳定杆名称"}
             },
-            "required": ["antiroll_name"]
+            "required": ["position", "antiroll_name"]
         },
-        callback=lambda antiroll_name: _select_antiroll(True, antiroll_name),
-    )
-
-    registry.register(
-        name="select_rear_antiroll",
-        description="选择后轮稳定杆(防倾杆)。",
-        params_schema={
-            "type": "object",
-            "properties": {
-                "antiroll_name": {"type": "string", "description": "稳定杆名称"}
-            },
-            "required": ["antiroll_name"]
-        },
-        callback=lambda antiroll_name: _select_antiroll(False, antiroll_name),
+        callback=lambda position, antiroll_name: _select_antiroll(
+            position == "front", antiroll_name
+        ),
     )
 
 
@@ -302,23 +235,7 @@ def _register_antiroll_actions(registry, ctx):
 # 其他
 # ---------------------------------------------------------------------------
 
-def _register_misc(registry, ctx):
-
-    def refresh_tuning_params() -> str:
-        """重新读取当前车型的调校样件列表(刷新 UI)"""
-        try:
-            ctx.ui.UpdateTuningParam()
-            return "已重新读取样件列表。"
-        except Exception as e:
-            return f"刷新失败: {e}"
-
-    registry.register(
-        name="refresh_tuning_params",
-        description="重新读取当前车型的调校样件列表(弹簧、稳定杆等)。"
-                    "当 CarSim 数据库有外部修改时使用。",
-        params_schema={"type": "object", "properties": {}, "required": []},
-        callback=refresh_tuning_params,
-    )
+def _register_get_current_setup(registry, ctx):
 
     def get_current_setup() -> str:
         """查询当前车型和悬架配置"""
@@ -343,3 +260,48 @@ def _register_misc(registry, ctx):
         params_schema={"type": "object", "properties": {}, "required": []},
         callback=get_current_setup,
     )
+
+
+def _set_spring(ctx, selector, position: str, side: str, spring_name: str) -> str:
+    position = position.lower().strip()
+    side = (side or "both").lower().strip()
+
+    if position not in ("front", "rear"):
+        return "position 仅支持 front 或 rear。"
+    if side not in ("left", "right", "both"):
+        return "side 仅支持 left、right 或 both。"
+
+    page = 1 if position == "front" else 2
+    if position == "front":
+        left_cfg = ('#BlueLink0', 'frontSpringName', 'select_frontSpring_button',
+                    'frontSpringEditText', '前')
+        right_cfg = ('#BlueLink3', 'frontRightSpringName', 'select_frontRightSpring_button',
+                     '_noop', '前右')
+    else:
+        left_cfg = ('#BlueLink0', 'rearSpringName', 'select_rearSpring_button',
+                    'rearSpringEditText', '后')
+        right_cfg = ('#BlueLink3', 'rearRightSpringName', 'select_rearRightSpring_button',
+                     '_noop', '后右')
+
+    messages = []
+    numeric_value = None
+    try:
+        numeric_value = float(spring_name)
+    except ValueError:
+        numeric_value = None
+
+    if side in ("left", "both"):
+        blue_link, name_attr, button_attr, spin_attr, label = left_cfg
+        messages.append(selector(page, blue_link, name_attr, button_attr, spin_attr, label, spring_name))
+
+    if side in ("right", "both"):
+        blue_link, name_attr, button_attr, spin_attr, label = right_cfg
+        # 数值模式目前仅支持主侧, 右侧遇到纯数值时给出更友好的提示
+        if numeric_value is not None:
+            if side == "right":
+                return "右侧弹簧当前仅支持按名称切换,暂不支持直接输入数值刚度。"
+            messages.append("右侧弹簧未更新: 当前仅支持按名称切换,暂不支持直接输入数值刚度")
+            return "；".join(messages)
+        messages.append(selector(page, blue_link, name_attr, button_attr, spin_attr, label, spring_name))
+
+    return "；".join(messages)

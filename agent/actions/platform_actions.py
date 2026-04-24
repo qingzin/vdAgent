@@ -1,10 +1,9 @@
 """
 运动平台控制相关 action
 
-- platform_control              发送 0-6 指令
 - one_click_platform_start      一键启动
 - one_click_platform_stop       一键关闭
-- set_platform_offset           设置平台位置偏置 X/Y/Z
+- prepare_platform             设置平台位置偏置 X/Y/Z
 """
 
 
@@ -16,33 +15,6 @@ COMMAND_NAMES = {
 
 
 def register(registry, ctx):
-
-    def platform_control(command: int) -> str:
-        if command not in COMMAND_NAMES:
-            return f"无效指令 {command}, 有效范围 0-6。"
-        try:
-            ctx.ui.sendData2PlatformControl(0, command)
-            if hasattr(ctx.ui, 'control_command_input'):
-                ctx.ui.control_command_input.setText(str(command))
-            return f"已发送平台指令: {command} - {COMMAND_NAMES[command]}"
-        except Exception as e:
-            return f"发送失败: {e}"
-
-    registry.register(
-        name="platform_control",
-        description="发送运动平台控制指令。"
-                    "0=Off关闭, 1=Disengage脱开, 2=Consent同意, "
-                    "3=ReadyForTraining准备训练, 4=Engage接合, 5=Hold保持, 6=Reset重置。",
-        params_schema={
-            "type": "object",
-            "properties": {
-                "command": {"type": "integer", "description": "指令编号 0-6",
-                            "enum": [0, 1, 2, 3, 4, 5, 6]}
-            },
-            "required": ["command"]
-        },
-        callback=platform_control,
-    )
 
     def one_click_platform_start() -> str:
         try:
@@ -72,7 +44,7 @@ def register(registry, ctx):
         callback=one_click_platform_stop,
     )
 
-    def set_platform_offset(x: float = None, y: float = None, z: float = None) -> str:
+    def prepare_platform(x: float = None, y: float = None, z: float = None) -> str:
         ui = ctx.ui
 
         if x is None and y is None and z is None:
@@ -108,8 +80,9 @@ def register(registry, ctx):
             return f"设置失败: {e}"
 
     registry.register(
-        name="set_platform_offset",
-        description="设置运动平台的位置偏置,未指定的轴保持当前值。单位:米。",
+        name="prepare_platform",
+        description="准备运动平台配置。当前支持设置平台位置偏置,"
+                    "未指定的轴保持当前值。单位:米。",
         params_schema={
             "type": "object",
             "properties": {
@@ -119,5 +92,5 @@ def register(registry, ctx):
             },
             "required": []
         },
-        callback=set_platform_offset,
+        callback=prepare_platform,
     )

@@ -19,7 +19,6 @@ from agent.actions import (
     platform_actions,
     scene_actions,
     visual_actions,
-    plot_actions,
     misc_actions,
 )
 
@@ -29,11 +28,10 @@ ACTION_MODULES = [
     simulation_actions,  # CarSim 运行/Simulink/编译/缓存/查看
     recording_actions,   # 数据记录
     haptic_actions,      # 触感力反馈
-    platform_actions,    # 平台指令/一键启停/偏置
-    scene_actions,       # 地图/起点/工况
+    platform_actions,    # 平台准备/一键启停
+    scene_actions,       # 工况/地图/起点/确认
     visual_actions,      # 视觉补偿
-    plot_actions,        # 绘图/报警
-    misc_actions,        # 预定义/信号发送总开关
+    misc_actions,        # 评价元数据
 ]
 
 

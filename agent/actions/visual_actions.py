@@ -1,8 +1,7 @@
 """
 视觉补偿相关 action
 
-- set_visual_compensation        视觉运动跟随补偿 (12 参数: 6 offset + 6 gain)
-- set_visual_delay_compensation  视觉延迟补偿 (5 参数)
+- set_visual_profile             统一设置视觉运动跟随与视觉延迟补偿
 """
 
 
@@ -35,29 +34,45 @@ VDC_FIELDS = [
 def register(registry, ctx):
 
     # --------- 视觉运动跟随补偿 ---------
-    def set_visual_compensation(**kwargs) -> str:
+    def set_visual_profile(**kwargs) -> str:
         ui = ctx.ui
-        changes = []
+        vc_changes = []
         for key, attr, label, _default in VC_FIELDS:
             if kwargs.get(key) is None:
                 continue
             val = float(kwargs[key])
             if hasattr(ui, attr):
                 getattr(ui, attr).setText(str(val))
-                changes.append(f"{label}({key})={val}")
-        if not changes:
+                vc_changes.append(f"{label}({key})={val}")
+
+        vdc_changes = []
+        for key, attr, label, _default in VDC_FIELDS:
+            if kwargs.get(key) is None:
+                continue
+            val = float(kwargs[key])
+            if hasattr(ui, attr):
+                getattr(ui, attr).setText(str(val))
+                vdc_changes.append(f"{label}({key})={val}")
+
+        if not vc_changes and not vdc_changes:
             return "未指定任何参数。"
+
+        messages = []
         try:
-            ui.ApplyVisualCompensation()
-            return f"已应用视觉运动跟随补偿: {', '.join(changes)}"
+            if vc_changes:
+                ui.ApplyVisualCompensation()
+                messages.append(f"已应用视觉运动跟随补偿: {', '.join(vc_changes)}")
+            if vdc_changes:
+                ui.ApplyVisualDelayCompensation()
+                messages.append(f"已应用视觉延迟补偿: {', '.join(vdc_changes)}")
+            return "；".join(messages)
         except Exception as e:
             return f"应用失败: {e}"
 
     registry.register(
-        name="set_visual_compensation",
-        description="设置视觉运动跟随补偿参数,未指定的参数保持 UI 当前值。"
-                    "参数分两类: 偏置(offset, 单位米或度)和增益(gain, 放大系数)。"
-                    "可独立调整 x/y/z/roll/pitch/yaw 六个方向。",
+        name="set_visual_profile",
+        description="统一设置视觉运动跟随补偿与视觉延迟补偿。"
+                    "未指定的参数保持当前值,可一次同时更新两类视觉参数。",
         params_schema={
             "type": "object",
             "properties": {
@@ -73,39 +88,6 @@ def register(registry, ctx):
                 "roll_gain":    {"type": "number", "description": "Roll 增益"},
                 "pitch_gain":   {"type": "number", "description": "Pitch 增益"},
                 "yaw_gain":     {"type": "number", "description": "Yaw 增益"},
-            },
-            "required": []
-        },
-        callback=set_visual_compensation,
-    )
-
-    # --------- 视觉延迟补偿 ---------
-    def set_visual_delay_compensation(**kwargs) -> str:
-        ui = ctx.ui
-        changes = []
-        for key, attr, label, _default in VDC_FIELDS:
-            if kwargs.get(key) is None:
-                continue
-            val = float(kwargs[key])
-            if hasattr(ui, attr):
-                getattr(ui, attr).setText(str(val))
-                changes.append(f"{label}({key})={val}")
-        if not changes:
-            return "未指定任何参数。"
-        try:
-            ui.ApplyVisualDelayCompensation()
-            return f"已应用视觉延迟补偿: {', '.join(changes)}"
-        except Exception as e:
-            return f"应用失败: {e}"
-
-    registry.register(
-        name="set_visual_delay_compensation",
-        description="设置视觉延迟补偿参数,未指定的保持 UI 当前值。"
-                    "参数: sample_time(采样时间秒), delay_time(延迟毫秒), "
-                    "freq(机动频率), pos_acc(正向最大加速度), neg_acc(负向最大加速度)。",
-        params_schema={
-            "type": "object",
-            "properties": {
                 "sample_time": {"type": "number", "description": "采样时间 (秒)"},
                 "delay_time":  {"type": "number", "description": "延迟时间 (毫秒)"},
                 "freq":        {"type": "number", "description": "机动频率"},
@@ -114,5 +96,5 @@ def register(registry, ctx):
             },
             "required": []
         },
-        callback=set_visual_delay_compensation,
+        callback=set_visual_profile,
     )

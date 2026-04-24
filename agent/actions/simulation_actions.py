@@ -2,10 +2,8 @@
 仿真相关 action
 
 - run_carsim           运行 CarSim 仿真
-- open_simulink        打开 Simulink (对应"打开simulink"按钮)
-- build_dspace         编译 (对应"编译"按钮)
-- clear_offline_data   清空离线仿真数据缓存
-- view_offline_data    查看并对比离线仿真数据
+- manage_simulation_workspace  管理仿真工作区
+- analyze_offline_result       查看并对比离线仿真数据
 """
 
 from ._helpers import require_not_recording
@@ -31,53 +29,37 @@ def register(registry, ctx):
         callback=run_carsim,
     )
 
-    def open_simulink() -> str:
+    def manage_simulation_workspace(operation: str) -> str:
+        op = operation.lower().strip()
         try:
-            ctx.ui.OpenSimulink()
-            return "已请求打开 Simulink。"
+            if op in ("open_simulink", "simulink", "open"):
+                ctx.ui.OpenSimulink()
+                return "已请求打开 Simulink。"
+            if op in ("build_dspace", "build", "compile"):
+                ctx.ui.BuildDspace()
+                return "已请求编译 DSpace。"
+            return "未知 operation。支持: open_simulink / build_dspace"
         except Exception as e:
-            return f"打开 Simulink 失败: {e}"
+            return f"仿真工作区操作失败: {e}"
 
     registry.register(
-        name="open_simulink",
-        description="打开 Simulink 模型(对应 GUI 的'打开simulink'按钮)。",
-        params_schema={"type": "object", "properties": {}, "required": []},
-        callback=open_simulink,
+        name="manage_simulation_workspace",
+        description="管理仿真工作区准备动作。当前支持打开 Simulink 和编译 DSpace。",
+        params_schema={
+            "type": "object",
+            "properties": {
+                "operation": {
+                    "type": "string",
+                    "enum": ["open_simulink", "build_dspace"],
+                    "description": "仿真工作区操作类型"
+                }
+            },
+            "required": ["operation"]
+        },
+        callback=manage_simulation_workspace,
     )
 
-    def build_dspace() -> str:
-        try:
-            ctx.ui.BuildDspace()
-            return "已请求编译 DSpace。"
-        except Exception as e:
-            return f"编译失败: {e}"
-
-    registry.register(
-        name="build_dspace",
-        description="编译 DSpace 模型(对应 GUI 的'编译'按钮)。",
-        params_schema={"type": "object", "properties": {}, "required": []},
-        callback=build_dspace,
-    )
-
-    def clear_offline_data() -> str:
-        """清除 E:\\01_TestData\\01_DCH_Data\\DCH\\离线仿真 目录的所有数据"""
-        try:
-            result = ctx.ui.clear()
-            if result is False:
-                return "清理缓存失败,请查看控制台日志。"
-            return "离线仿真数据缓存已清理。"
-        except Exception as e:
-            return f"清理失败: {e}"
-
-    registry.register(
-        name="clear_offline_data",
-        description="清除所有离线仿真数据缓存(删除 离线仿真 目录下所有文件)。"
-                    "危险操作,确认后执行。",
-        params_schema={"type": "object", "properties": {}, "required": []},
-        callback=clear_offline_data,
-    )
-
-    def view_offline_data() -> str:
+    def analyze_offline_result() -> str:
         try:
             ctx.ui.viewOfflineData()
             return "已跳转到离线数据查看页,正在加载对比结果。"
@@ -85,9 +67,9 @@ def register(registry, ctx):
             return f"查看离线数据失败: {e}"
 
     registry.register(
-        name="view_offline_data",
-        description="跳转到数据处理-一阶起伏页面查看离线仿真数据,"
-                    "并自动找出最优方案。",
+        name="analyze_offline_result",
+        description="分析离线仿真结果并跳转到结果对比页面。"
+                    "用于查看已跑完方案的离线对比和最优方案。",
         params_schema={"type": "object", "properties": {}, "required": []},
-        callback=view_offline_data,
+        callback=analyze_offline_result,
     )

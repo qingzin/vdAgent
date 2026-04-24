@@ -3,7 +3,7 @@
 
 - start_recording         开始记录 IMU/CarSim/MOOG 数据
 - stop_recording          结束记录
-- set_recording_options   配置记录开关(disusx / video / par / auto_record)
+- prepare_recording_session   配置记录会话开关(disusx / video / par / auto_record)
 - get_recording_status    查询当前记录状态
 """
 
@@ -48,8 +48,8 @@ def register(registry, ctx):
     )
 
     # ---------- 记录选项 ----------
-    def set_recording_options(record_disusx=None, video_recording=None,
-                              par_save=None, auto_record=None) -> str:
+    def prepare_recording_session(record_disusx=None, video_recording=None,
+                                  par_save=None, auto_record=None) -> str:
         ui = ctx.ui
         changes = []
 
@@ -80,11 +80,9 @@ def register(registry, ctx):
         return "已更新记录选项: " + ", ".join(changes)
 
     registry.register(
-        name="set_recording_options",
-        description="配置数据记录的附加选项,未指定的参数保持不变。包括:"
-                    "电控数据记录开关(record_disusx)、视频录制开关(video_recording)、"
-                    ".par 参数文件保存开关(par_save)、自动记录模式(auto_record,"
-                    "开启后根据 GPS 坐标自动开始/结束记录)。",
+        name="prepare_recording_session",
+        description="准备一次记录会话。统一配置电控记录、视频录制、"
+                    ".par 参数文件保存和自动记录模式。未指定的参数保持不变。",
         params_schema={
             "type": "object",
             "properties": {
@@ -95,7 +93,7 @@ def register(registry, ctx):
             },
             "required": []
         },
-        callback=set_recording_options,
+        callback=prepare_recording_session,
     )
 
     # ---------- 查询记录状态 ----------

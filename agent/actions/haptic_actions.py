@@ -1,8 +1,7 @@
 """
 触感力反馈相关 action
 
-- set_haptic_gains       设置触感增益参数
-- get_haptic_gains       查询当前触感增益参数
+- tune_haptic_feedback   查询或设置触感增益参数
 """
 
 
@@ -19,9 +18,21 @@ HAPTIC_SPECS = [
 
 def register(registry, ctx):
 
-    def set_haptic_gains(friction=None, damping=None, feedback=None,
-                         saturation=None, overall=None, steer_rate=None) -> str:
+    def tune_haptic_feedback(mode: str = "get", friction=None, damping=None, feedback=None,
+                             saturation=None, overall=None, steer_rate=None) -> str:
         ui = ctx.ui
+        mode = (mode or "get").lower().strip()
+        if mode == "get":
+            parts = []
+            for key, _lo, _hi, label, attr, _spin in HAPTIC_SPECS:
+                val = getattr(ui, attr, None)
+                if val is not None:
+                    parts.append(f"{label}({key})={val}")
+            return "当前触感参数: " + "; ".join(parts) if parts else "触感参数未初始化"
+
+        if mode != "set":
+            return "mode 仅支持 get 或 set。"
+
         params = {'friction': friction, 'damping': damping, 'feedback': feedback,
                   'saturation': saturation, 'overall': overall, 'steer_rate': steer_rate}
         changes, errors = [], []
@@ -52,13 +63,15 @@ def register(registry, ctx):
         return result
 
     registry.register(
-        name="set_haptic_gains",
-        description="设置转向力反馈触感参数,未指定的参数保持不变。包括摩擦增益(friction)、"
-                    "阻尼增益(damping)、回正增益(feedback)、限位增益(saturation)、"
-                    "手感轻重(overall)、力矩转角曲线转速(steer_rate)。",
+        name="tune_haptic_feedback",
+        description="查询或设置转向力反馈触感参数。mode=get 时返回当前配置；"
+                    "mode=set 时按需更新摩擦增益、阻尼增益、回正增益、限位增益、"
+                    "手感轻重和力矩转角曲线转速。",
         params_schema={
             "type": "object",
             "properties": {
+                "mode": {"type": "string", "enum": ["get", "set"],
+                         "description": "get 查询当前参数; set 更新参数"},
                 "friction":   {"type": "number", "description": "摩擦增益, -10~10"},
                 "damping":    {"type": "number", "description": "阻尼增益, -10~10"},
                 "feedback":   {"type": "number", "description": "回正增益, -10~10"},
@@ -68,21 +81,5 @@ def register(registry, ctx):
             },
             "required": []
         },
-        callback=set_haptic_gains,
-    )
-
-    def get_haptic_gains() -> str:
-        ui = ctx.ui
-        parts = []
-        for key, _lo, _hi, label, attr, _spin in HAPTIC_SPECS:
-            val = getattr(ui, attr, None)
-            if val is not None:
-                parts.append(f"{label}({key})={val}")
-        return "当前触感参数: " + "; ".join(parts) if parts else "触感参数未初始化"
-
-    registry.register(
-        name="get_haptic_gains",
-        description="查询当前所有触感增益参数的值。",
-        params_schema={"type": "object", "properties": {}, "required": []},
-        callback=get_haptic_gains,
+        callback=tune_haptic_feedback,
     )
