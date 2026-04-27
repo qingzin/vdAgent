@@ -432,6 +432,11 @@ class SimulatorUI(QMainWindow):
         # self.record_indicator = QLabel()
         # self.record_indicator.setFixedSize(20, 20)
         self.update_indicator(False)  # 初始状态为熄灭
+        try:
+            from agent.bootstrap import attach_agent
+            attach_agent(self)
+        except Exception as e:
+            print(f"[Agent] AI 助手加载失败,主程序继续启动: {e}")
 
     def _show_corner_message(self, message: str, seconds: int = 5):
         try:

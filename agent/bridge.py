@@ -20,6 +20,8 @@ from agent.actions import (
     scene_actions,
     visual_actions,
     misc_actions,
+    planning_actions,
+    knowledge_actions,
 )
 
 
@@ -32,6 +34,8 @@ ACTION_MODULES = [
     scene_actions,       # 工况/地图/起点/确认
     visual_actions,      # 视觉补偿
     misc_actions,        # 评价元数据
+    planning_actions,    # 底盘任务规划
+    knowledge_actions,   # 底盘调校建议
 ]
 
 

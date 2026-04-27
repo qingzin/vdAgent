@@ -82,4 +82,7 @@ def register(registry, ctx):
             "required": []
         },
         callback=tune_haptic_feedback,
+        category="haptic",
+        risk_level="medium",
+        exposed=True,
     )

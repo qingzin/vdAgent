@@ -72,6 +72,9 @@ def _register_select_vehicle(registry, ctx):
             "required": ["vehicle_name"]
         },
         callback=select_vehicle,
+        category="vehicle",
+        risk_level="medium",
+        exposed=True,
     )
 
 
@@ -154,6 +157,9 @@ def _register_spring_action(registry, ctx):
             side=side,
             spring_name=spring_name,
         ),
+        category="tuning",
+        risk_level="high",
+        exposed=True,
     )
 
 
@@ -228,6 +234,9 @@ def _register_antiroll_action(registry, ctx):
         callback=lambda position, antiroll_name: _select_antiroll(
             position == "front", antiroll_name
         ),
+        category="tuning",
+        risk_level="high",
+        exposed=True,
     )
 
 
@@ -259,6 +268,10 @@ def _register_get_current_setup(registry, ctx):
         description="查询并返回当前车型及其悬架配置(弹簧、稳定杆名称)。",
         params_schema={"type": "object", "properties": {}, "required": []},
         callback=get_current_setup,
+        category="query",
+        risk_level="low",
+        exposed=True,
+        side_effects=False,
     )
 
 

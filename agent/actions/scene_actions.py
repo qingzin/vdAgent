@@ -106,6 +106,9 @@ def register(registry, ctx):
             "required": []
         },
         callback=prepare_test_scene,
+        category="scene",
+        risk_level="medium",
+        exposed=True,
     )
 
     # -----------------------------------------------------------------------
@@ -126,4 +129,8 @@ def register(registry, ctx):
         description="查询当前场景设置(地图、起点、工况)。",
         params_schema={"type": "object", "properties": {}, "required": []},
         callback=get_current_scene,
+        category="query",
+        risk_level="low",
+        exposed=True,
+        side_effects=False,
     )

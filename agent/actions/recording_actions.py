@@ -26,6 +26,9 @@ def register(registry, ctx):
         description="开始记录 IMU、CarSim、MOOG 等传感器数据到 CSV 文件。",
         params_schema={"type": "object", "properties": {}, "required": []},
         callback=start_recording,
+        category="recording",
+        risk_level="medium",
+        exposed=True,
     )
 
     # ---------- 结束记录 ----------
@@ -45,6 +48,9 @@ def register(registry, ctx):
                     "非 auto_record 模式下会弹出评价信息对话框。",
         params_schema={"type": "object", "properties": {}, "required": []},
         callback=stop_recording,
+        category="recording",
+        risk_level="medium",
+        exposed=True,
     )
 
     # ---------- 记录选项 ----------
@@ -94,6 +100,9 @@ def register(registry, ctx):
             "required": []
         },
         callback=prepare_recording_session,
+        category="recording",
+        risk_level="low",
+        exposed=True,
     )
 
     # ---------- 查询记录状态 ----------
@@ -118,4 +127,8 @@ def register(registry, ctx):
         description="查询当前数据记录状态(是否正在记录、各类开关的启停情况)。",
         params_schema={"type": "object", "properties": {}, "required": []},
         callback=get_recording_status,
+        category="query",
+        risk_level="low",
+        exposed=True,
+        side_effects=False,
     )

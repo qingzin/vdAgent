@@ -10,7 +10,9 @@ class ActionRegistry:
         self._actions = {}
 
     def register(self, name: str, description: str,
-                 params_schema: dict, callback: callable):
+                 params_schema: dict, callback: callable,
+                 category: str = None, risk_level: str = "medium",
+                 exposed: bool = True, side_effects: bool = True):
         """
         注册一个 agent 可调用的操作
 
@@ -19,17 +21,27 @@ class ActionRegistry:
             description: 操作描述（中文，帮助 LLM 理解用途）
             params_schema: 参数 JSON Schema
             callback: 回调函数，接受 **kwargs 参数
+            category: 操作类别，用于工具治理和审计
+            risk_level: 风险等级，默认 medium
+            exposed: 是否暴露给 LLM function calling，默认 True
+            side_effects: 是否会改变仿真器、文件、车辆或外部状态，默认 True
         """
         self._actions[name] = {
             "description": description,
             "parameters": params_schema,
             "callback": callback,
+            "category": category,
+            "risk_level": risk_level,
+            "exposed": exposed,
+            "side_effects": side_effects,
         }
 
     def get_tools_schema(self) -> list:
         """导出为 OpenAI function calling 的 tools 格式"""
         tools = []
         for name, info in self._actions.items():
+            if not info.get("exposed", True):
+                continue
             tools.append({
                 "type": "function",
                 "function": {
@@ -45,6 +57,18 @@ class ActionRegistry:
 
     def has_action(self, name: str) -> bool:
         return name in self._actions
+
+    def get_metadata(self, name: str) -> dict:
+        """获取 action 元数据，供日志、审计和测试使用。"""
+        if name not in self._actions:
+            return {}
+        info = self._actions[name]
+        return {
+            "category": info.get("category"),
+            "risk_level": info.get("risk_level", "medium"),
+            "exposed": info.get("exposed", True),
+            "side_effects": info.get("side_effects", True),
+        }
 
     def execute(self, name: str, params: dict) -> str:
         """

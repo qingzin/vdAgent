@@ -28,6 +28,9 @@ def register(registry, ctx):
         description="平台一键启动,自动按顺序发送 Reset(6) → Consent(2) → Engage(4) 三个指令。",
         params_schema={"type": "object", "properties": {}, "required": []},
         callback=one_click_platform_start,
+        category="platform",
+        risk_level="high",
+        exposed=True,
     )
 
     def one_click_platform_stop() -> str:
@@ -42,6 +45,9 @@ def register(registry, ctx):
         description="平台一键关闭,自动按顺序发送 Disengage(1) → Off(0) 两个指令。",
         params_schema={"type": "object", "properties": {}, "required": []},
         callback=one_click_platform_stop,
+        category="platform",
+        risk_level="medium",
+        exposed=True,
     )
 
     def prepare_platform(x: float = None, y: float = None, z: float = None) -> str:
@@ -93,4 +99,7 @@ def register(registry, ctx):
             "required": []
         },
         callback=prepare_platform,
+        category="platform",
+        risk_level="medium",
+        exposed=True,
     )

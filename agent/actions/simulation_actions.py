@@ -27,6 +27,9 @@ def register(registry, ctx):
                     "结果保存到离线仿真目录,并更新最优方案。",
         params_schema={"type": "object", "properties": {}, "required": []},
         callback=run_carsim,
+        category="simulation",
+        risk_level="medium",
+        exposed=True,
     )
 
     def manage_simulation_workspace(operation: str) -> str:
@@ -57,6 +60,9 @@ def register(registry, ctx):
             "required": ["operation"]
         },
         callback=manage_simulation_workspace,
+        category="simulation",
+        risk_level="medium",
+        exposed=True,
     )
 
     def analyze_offline_result() -> str:
@@ -72,4 +78,8 @@ def register(registry, ctx):
                     "用于查看已跑完方案的离线对比和最优方案。",
         params_schema={"type": "object", "properties": {}, "required": []},
         callback=analyze_offline_result,
+        category="analysis",
+        risk_level="low",
+        exposed=True,
+        side_effects=False,
     )
