@@ -2,6 +2,7 @@ from unittest.mock import patch
 
 from agent.executor import AgentExecutor
 from agent.memory.store import AgentMemoryStore
+from agent.planner import plan_chassis_task
 from agent.registry import ActionRegistry
 
 
@@ -76,10 +77,12 @@ def test_planning_action_auto_executes_without_pending_confirm(tmp_path):
     assert confirmations == []
     assert responses[-1].startswith("## 底盘任务规划")
     assert executor.history[-1]["content"] == responses[-1]
+    assert executor.recent_plan_context["plan_id"].startswith("plan_")
     assert [t["event_type"] for t in store.query_traces(action_name="plan_chassis_task")] == [
         "llm_tool_call",
         "auto_execute_action",
         "action_result",
+        "plan_context_saved",
     ]
 
 
@@ -199,6 +202,72 @@ def test_operational_action_still_requests_confirmation(tmp_path):
 
     assert executor._pending_action == ("set_spring", {"position": "front", "spring_name": "K1"})
     assert confirmations == ["set_spring"]
+
+
+def test_unmatched_high_risk_action_warns_in_confirmation_summary(tmp_path):
+    registry = ActionRegistry()
+    registry.register(
+        name="set_spring",
+        description="set spring",
+        params_schema={"type": "object", "properties": {}, "required": []},
+        callback=lambda position, spring_name: "ok",
+        category="tuning",
+        risk_level="high",
+        exposed=True,
+    )
+    executor = AgentExecutor(
+        registry,
+        llm_client=None,
+        memory_store=AgentMemoryStore(base_dir=str(tmp_path)),
+    )
+    summaries = []
+    executor.confirm_request.connect(
+        lambda name, params, summary: summaries.append(summary)
+    )
+
+    executor._on_llm_response(FakeLLMResponse(
+        tool_name="set_spring",
+        tool_params={"position": "front", "spring_name": "K1"},
+    ))
+
+    assert "未匹配近期计划" in summaries[-1]
+
+
+def test_matched_plan_action_still_requires_confirmation_without_warning(tmp_path):
+    registry = ActionRegistry()
+    registry.register(
+        name="set_antiroll_bar",
+        description="set antiroll bar",
+        params_schema={"type": "object", "properties": {}, "required": []},
+        callback=lambda position, bar_name: "ok",
+        category="tuning",
+        risk_level="high",
+        exposed=True,
+    )
+    executor = AgentExecutor(
+        registry,
+        llm_client=None,
+        memory_store=AgentMemoryStore(base_dir=str(tmp_path)),
+    )
+    executor.recent_plan_context = plan_chassis_task(
+        goal="lane change roll improvement",
+        condition_name="lane change",
+    )
+    summaries = []
+    executor.confirm_request.connect(
+        lambda name, params, summary: summaries.append(summary)
+    )
+
+    executor._on_llm_response(FakeLLMResponse(
+        tool_name="set_antiroll_bar",
+        tool_params={"position": "rear", "bar_name": "bar_a"},
+    ))
+
+    assert executor._pending_action == (
+        "set_antiroll_bar",
+        {"position": "rear", "bar_name": "bar_a"},
+    )
+    assert "未匹配近期计划" not in summaries[-1]
 
 
 def test_memory_initialization_failure_does_not_block_executor():

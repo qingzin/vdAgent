@@ -7,6 +7,20 @@ def test_plan_chassis_task_for_lane_change_roll():
     plan = plan_chassis_task(goal="单移线侧倾大，需要改善", condition_name="单移线")
 
     assert plan["kind"] == "chassis_task_plan"
+    assert plan["plan_id"].startswith("plan_")
+    assert plan["goal"]
+    assert plan["condition_name"]
+    assert plan["steps"]
+    assert plan["validation_metrics"]
+    assert plan["required_confirmation"]
+    assert {
+        "action_name",
+        "description",
+        "params_needed",
+        "risk_level",
+        "preconditions",
+        "validation",
+    }.issubset(plan["steps"][0])
     assert any("稳定杆" in item for item in plan["parameter_direction"])
     assert any("侧倾角" in item for item in plan["validation_metrics"])
 

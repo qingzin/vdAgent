@@ -2,24 +2,88 @@
 Rule-based chassis planning and tuning suggestions.
 """
 
+from hashlib import sha1
+
 
 def _text(*parts) -> str:
     return " ".join(str(p or "") for p in parts).lower()
+
+
+def _stable_plan_id(kind: str, goal: str = None, condition_name: str = None) -> str:
+    raw = "|".join([str(kind or ""), str(goal or ""), str(condition_name or "")])
+    return f"plan_{sha1(raw.encode('utf-8')).hexdigest()[:12]}"
 
 
 def _base_response(kind: str, goal: str = None, complaint: str = None,
                    condition_name: str = None) -> dict:
     return {
         "kind": kind,
+        "plan_id": _stable_plan_id(kind, goal or complaint, condition_name),
         "goal": goal,
         "complaint": complaint,
         "condition_name": condition_name,
+        "steps": [],
         "recommended_steps": [],
         "parameter_direction": [],
         "risks": [],
         "validation_metrics": [],
+        "required_confirmation": [],
         "recent_experiences": [],
     }
+
+
+def _infer_action_name(description: str) -> str:
+    text = str(description or "")
+    action_names = [
+        "get_current_setup",
+        "prepare_test_scene",
+        "prepare_recording_session",
+        "start_recording",
+        "stop_recording",
+        "set_antiroll_bar",
+        "set_spring",
+        "tune_haptic_feedback",
+        "run_carsim",
+        "analyze_offline_result",
+        "plan_chassis_task",
+        "suggest_chassis_tuning",
+    ]
+    for action_name in action_names:
+        if action_name in text:
+            return action_name
+    return "review_with_engineer"
+
+
+def _ensure_plan_schema(result: dict) -> dict:
+    """Attach the stable structured plan schema while keeping legacy fields."""
+    if not isinstance(result, dict):
+        return result
+    kind = result.get("kind")
+    goal = result.get("goal") or result.get("complaint")
+    condition_name = result.get("condition_name")
+    result.setdefault("plan_id", _stable_plan_id(kind, goal, condition_name))
+    result.setdefault("goal", goal)
+    result.setdefault("condition_name", condition_name)
+    result.setdefault("validation_metrics", [])
+    if not result.get("required_confirmation"):
+        result["required_confirmation"] = [
+            "Confirm any side-effect or high-risk action before execution."
+        ]
+    if not result.get("steps"):
+        steps = []
+        for index, description in enumerate(result.get("recommended_steps", []), start=1):
+            action_name = _infer_action_name(description)
+            steps.append({
+                "step_id": f"{result['plan_id']}_step_{index}",
+                "action_name": action_name,
+                "description": str(description),
+                "params_needed": [],
+                "risk_level": "high" if action_name.startswith(("set_", "tune_", "prepare_", "start_", "stop_", "run_")) else "low",
+                "preconditions": [],
+                "validation": list(result.get("validation_metrics", [])),
+            })
+        result["steps"] = steps
+    return result
 
 
 def format_chassis_plan(result: dict) -> str:
@@ -90,7 +154,7 @@ def plan_chassis_task(goal: str, complaint: str = None,
         result["parameter_direction"].append("本任务优先准备场景和记录链路，不建议直接修改弹簧或稳定杆。")
         result["risks"].append("记录中修改车辆或场景会污染数据，应在记录前完成配置。")
         result["validation_metrics"].extend(["记录文件是否生成", "IMU/CarSim/MOOG 通道是否连续", "工况名称和起点是否正确"])
-        return result
+        return _ensure_plan_schema(result)
 
     if any(k in query for k in ["修改悬架", "仿真验证", "验证", "run_carsim", "悬架并仿真"]):
         result["recommended_steps"].extend([
@@ -105,7 +169,7 @@ def plan_chassis_task(goal: str, complaint: str = None,
         ])
         result["risks"].append("直接大幅提高刚度可能改善响应但恶化舒适性和轮胎贴地性。")
         result["validation_metrics"].extend(["横摆角速度峰值/相位", "侧倾角峰值", "横向加速度 RMS", "垂向加速度 RMS"])
-        return result
+        return _ensure_plan_schema(result)
 
     if any(k in query for k in ["侧倾", "单移线", "double lane", "lane change"]):
         result["recommended_steps"].extend([
@@ -119,7 +183,7 @@ def plan_chassis_task(goal: str, complaint: str = None,
         ])
         result["risks"].append("提高滚转刚度可能增加单轮冲击、降低极限附着余量。")
         result["validation_metrics"].extend(["侧倾角峰值", "横摆响应", "转向盘角输入", "主观侧倾评分"])
-        return result
+        return _ensure_plan_schema(result)
 
     if any(k in query for k in ["中心区", "方向盘", "重", "手感"]):
         result["recommended_steps"].extend([
@@ -133,7 +197,7 @@ def plan_chassis_task(goal: str, complaint: str = None,
         ])
         result["risks"].append("过度降低摩擦/阻尼可能导致中心虚位感或振荡。")
         result["validation_metrics"].extend(["中心区转向力矩", "方向盘角速度", "回正超调", "主观中心区评分"])
-        return result
+        return _ensure_plan_schema(result)
 
     if any(k in query for k in ["起伏", "舒适", "垂向", "bump", "ride"]):
         result["recommended_steps"].extend([
@@ -147,7 +211,7 @@ def plan_chassis_task(goal: str, complaint: str = None,
         ])
         result["risks"].append("降低刚度可能改善冲击但增加俯仰/侧倾和操稳响应滞后。")
         result["validation_metrics"].extend(["垂向加速度峰值/RMS", "俯仰角速度", "悬架行程", "舒适性主观评分"])
-        return result
+        return _ensure_plan_schema(result)
 
     result["recommended_steps"].extend([
         "先澄清目标、工况、当前配置和评价指标。",
@@ -157,7 +221,7 @@ def plan_chassis_task(goal: str, complaint: str = None,
     result["parameter_direction"].append("信息不足时不直接修改硬件参数。")
     result["risks"].append("目标不清会导致参数修改不可追溯，且难以判断改善来源。")
     result["validation_metrics"].extend(["目标工况", "基线配置", "主观评价", "关键客观指标"])
-    return result
+    return _ensure_plan_schema(result)
 
 
 def suggest_chassis_tuning(complaint: str, objective: str = None,
@@ -181,7 +245,7 @@ def suggest_chassis_tuning(complaint: str, objective: str = None,
         ])
         result["risks"].extend(["稳定杆过硬会牺牲不平路舒适性。", "后轴过硬可能增加甩尾风险。"])
         result["validation_metrics"].extend(["侧倾角峰值", "横摆角速度峰值", "横向加速度 RMS", "主观稳定性评分"])
-        return result
+        return _ensure_plan_schema(result)
 
     if any(k in query for k in ["中心区", "方向盘", "重", "手感"]):
         result["recommended_steps"].extend([
@@ -196,7 +260,7 @@ def suggest_chassis_tuning(complaint: str, objective: str = None,
         ])
         result["risks"].append("手感调轻过多会让中心区变虚，甚至掩盖真实路感。")
         result["validation_metrics"].extend(["方向盘中心区力矩", "小角度回正时间", "方向盘振荡", "主观手感评分"])
-        return result
+        return _ensure_plan_schema(result)
 
     if any(k in query for k in ["起伏", "舒适", "垂向", "bump", "ride"]):
         result["recommended_steps"].extend([
@@ -211,7 +275,7 @@ def suggest_chassis_tuning(complaint: str, objective: str = None,
         ])
         result["risks"].append("舒适性改善可能带来更大侧倾/俯仰，需要同步检查操稳指标。")
         result["validation_metrics"].extend(["垂向加速度峰值/RMS", "悬架行程余量", "俯仰角速度", "舒适性评分"])
-        return result
+        return _ensure_plan_schema(result)
 
     result["recommended_steps"].extend([
         "补充抱怨现象、目标工况、车速和当前配置。",
@@ -220,4 +284,4 @@ def suggest_chassis_tuning(complaint: str, objective: str = None,
     result["parameter_direction"].append("信息不足时只提供诊断路径，不建议直接给具体硬件参数。")
     result["risks"].append("缺少工况和指标会导致建议不可验证。")
     result["validation_metrics"].extend(["基线数据", "目标工况", "主观评分", "客观指标"])
-    return result
+    return _ensure_plan_schema(result)

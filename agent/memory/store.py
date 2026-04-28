@@ -40,6 +40,8 @@ class NullAgentMemoryStore:
         return []
 
     def query_experience_seeds(self, action_name: Optional[str] = None,
+                               condition_name: Optional[str] = None,
+                               keyword: Optional[str] = None,
                                limit: int = 20) -> List[dict]:
         return []
 
@@ -85,11 +87,35 @@ class AgentMemoryStore:
         return records[-limit:]
 
     def query_experience_seeds(self, action_name: Optional[str] = None,
+                               condition_name: Optional[str] = None,
+                               keyword: Optional[str] = None,
                                limit: int = 20) -> List[dict]:
         records = self._read_all(self.experience_seeds_path)
         if action_name is not None:
             records = [r for r in records if r.get("action_name") == action_name]
+        if condition_name is not None:
+            records = [r for r in records if r.get("condition_name") == condition_name]
+        if keyword:
+            needle = str(keyword).lower()
+            records = [r for r in records if self._seed_matches_keyword(r, needle)]
         return records[-limit:]
+
+    @staticmethod
+    def _seed_matches_keyword(record: dict, needle: str) -> bool:
+        fields = [
+            "action_name",
+            "result",
+            "lesson",
+            "goal",
+            "objective",
+            "condition_name",
+            "user_feedback",
+            "outcome",
+        ]
+        haystack = " ".join(str(record.get(field) or "") for field in fields)
+        haystack += " " + json.dumps(record.get("params") or {}, ensure_ascii=False)
+        haystack += " " + json.dumps(record.get("metrics") or {}, ensure_ascii=False)
+        return needle in haystack.lower()
 
     @staticmethod
     def _append_jsonl(path: Path, record: dict) -> None:

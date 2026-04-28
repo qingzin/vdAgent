@@ -55,6 +55,7 @@ except ImportError:  # pragma: no cover - used by non-GUI tests.
 
 from agent.memory.models import EngineeringExperienceSeed, ProcessTrace
 from agent.memory.store import AgentMemoryStore, NullAgentMemoryStore
+from agent.planner import plan_chassis_task, suggest_chassis_tuning
 
 
 SYSTEM_PROMPT = """你是一个驾驶模拟器控制系统的智能助手。用户会用中文自然语言描述想要进行的操作,你需要调用合适的工具来完成。
@@ -132,6 +133,7 @@ class AgentExecutor(QObject):
         self.history = []
         self.max_history = max_history
         self._pending_action = None
+        self.recent_plan_context = None
         self._worker_thread = None
         self._worker = None
         self._is_busy = False  # 防止并发 LLM 请求
@@ -214,7 +216,7 @@ class AgentExecutor(QObject):
                 self._auto_execute_action(name, params)
                 return
 
-            summary = self.registry.format_action_summary(name, params)
+            summary = self._build_confirmation_summary(name, params)
             self._pending_action = (name, params)
 
             self._append_history({
@@ -284,6 +286,7 @@ class AgentExecutor(QObject):
         """清空对话历史"""
         self.history.clear()
         self._pending_action = None
+        self.recent_plan_context = None
         self._write_trace("clear_history", "Conversation history cleared")
 
     @staticmethod
@@ -312,8 +315,56 @@ class AgentExecutor(QObject):
         status = "error" if str(result).startswith(("执行失败", "错误")) else "ok"
         self._write_trace("action_result", result, status=status,
                           payload={"params": params}, action_name=name)
+        if status == "ok":
+            self._capture_plan_context(name, params)
         self._append_history({"role": "assistant", "content": result})
         self.response_ready.emit(result)
+
+    def _build_confirmation_summary(self, action_name: str, params: dict) -> str:
+        summary = self.registry.format_action_summary(action_name, params)
+        if self._requires_confirmation_warning(action_name):
+            if not self._action_matches_recent_plan(action_name):
+                warning = "未匹配近期计划，建议先规划/重新确认。"
+                summary = f"{warning}\n{summary}"
+        return summary
+
+    def _requires_confirmation_warning(self, action_name: str) -> bool:
+        metadata = {}
+        if hasattr(self.registry, "get_metadata"):
+            metadata = self.registry.get_metadata(action_name)
+        risk_level = metadata.get("risk_level", "medium")
+        side_effects = metadata.get("side_effects", True)
+        return risk_level in {"medium", "high"} or side_effects is not False
+
+    def _action_matches_recent_plan(self, action_name: str) -> bool:
+        plan = self.recent_plan_context or {}
+        for step in plan.get("steps", []):
+            if step.get("action_name") == action_name:
+                return True
+        return False
+
+    def _capture_plan_context(self, action_name: str, params: dict):
+        if action_name not in {"plan_chassis_task", "suggest_chassis_tuning"}:
+            return
+        try:
+            if action_name == "plan_chassis_task":
+                plan = plan_chassis_task(**params)
+            else:
+                plan = suggest_chassis_tuning(**params)
+        except Exception:
+            return
+        self.recent_plan_context = plan
+        self._write_trace(
+            "plan_context_saved",
+            "Saved latest structured plan context",
+            payload={
+                "plan_id": plan.get("plan_id"),
+                "goal": plan.get("goal"),
+                "condition_name": plan.get("condition_name"),
+                "steps": plan.get("steps", []),
+            },
+            action_name=action_name,
+        )
 
     def _write_trace(self, event_type: str, message: str = "",
                      payload: dict = None, status: str = "ok",
@@ -345,13 +396,17 @@ class AgentExecutor(QObject):
         if hasattr(self.registry, "get_metadata"):
             metadata = self.registry.get_metadata(action_name)
         lesson = f"Confirmed {action_name} with params={params}; result={result}"
+        plan = self.recent_plan_context or {}
         try:
             self.memory_store.append_experience_seed(EngineeringExperienceSeed(
                 action_name=action_name,
                 params=params,
                 result=result,
                 lesson=lesson,
-                condition_name=params.get("condition_name") if isinstance(params, dict) else None,
+                goal=plan.get("goal"),
+                condition_name=(
+                    params.get("condition_name") if isinstance(params, dict) else None
+                ) or plan.get("condition_name"),
                 risk_level=metadata.get("risk_level", "medium"),
             ))
         except Exception:

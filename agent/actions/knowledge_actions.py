@@ -4,16 +4,28 @@ from agent.planner import format_chassis_plan, suggest_chassis_tuning
 from agent.memory.store import AgentMemoryStore
 
 
-def _recent_experience_seeds(limit: int = 3) -> list:
+def _relevant_experience_seeds(condition_name: str = None,
+                               keyword: str = None,
+                               limit: int = 3) -> list:
     try:
-        return AgentMemoryStore().recent_experience_seeds(limit=limit)
+        return AgentMemoryStore().query_experience_seeds(
+            condition_name=condition_name,
+            keyword=keyword,
+            limit=limit,
+        )
     except Exception:
         return []
 
 
 def _suggest_chassis_tuning_text(**kwargs) -> str:
     result = suggest_chassis_tuning(**kwargs)
-    result["recent_experiences"] = _recent_experience_seeds()
+    result["recent_experiences"] = _relevant_experience_seeds(
+        condition_name=kwargs.get("condition_name"),
+        keyword=(
+            None if kwargs.get("condition_name")
+            else kwargs.get("complaint") or kwargs.get("objective")
+        ),
+    )
     return format_chassis_plan(result)
 
 
