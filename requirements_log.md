@@ -17,3 +17,15 @@ Conflict/reasonableness check: this aligns with the existing single-tool executo
 - Add a nanobot-style memory bridge over the existing JSONL store, grouped as session, history, and knowledge layers.
 - Add a PoC route where complex chassis goals are handled by planning/knowledge tools first instead of directly calling write actions.
 - Keep this as an integration seam only: no nanobot dependency, no autonomous multi-step executor, and no `main.py` changes.
+
+Conflict/reasonableness check: this is compatible with the structured planning context work because it reuses plan context without changing planner output or GUI flow.
+
+## 2026-04-28 - Runtime safety boundary hardening
+
+- Add a minimal runtime action policy that only allows existing actions with `exposed=True`, distinguishes direct execution from confirmation-required actions, and reports plan-match context.
+- Replace the old `confirmed=True` bypass with a two-step confirmation flow: first request returns `confirmation_id` and `params_digest`, and execution requires the same id with unchanged params.
+- Ensure hidden actions cannot be invoked directly through the runtime even if the caller knows the action name.
+- Preserve compatibility for low-risk read-only tools and keep `confirmed=True` available only as part of the validated confirmation flow.
+- Add tests for hidden action blocking, high-risk confirmation id validation, medium/side-effect confirmation requirements, suggest routing, and knowledge layer export.
+
+Conflict/reasonableness check: this deliberately tightens the earlier runtime PoC behavior where `confirmed=True` alone was enough. The change is reasonable because it preserves the public call shape while closing a runtime safety bypass, and it avoids new dependencies, schema changes, or GUI changes.

@@ -8,6 +8,7 @@ from agent.memory.models import EngineeringExperienceSeed
 from agent.planner import plan_chassis_task, suggest_chassis_tuning
 from .memory import NanobotMemoryBridge
 from .models import RuntimeTool, RuntimeToolResult, RuntimeTurnResult
+from .policy import ActionPolicy
 
 
 PLANNING_TOOL_NAMES = {"plan_chassis_task", "suggest_chassis_tuning"}
@@ -27,13 +28,15 @@ class NanobotRuntimeAdapter:
 
     The adapter preserves existing vdAgent safety rules:
     low-risk read-only tools can execute immediately, while side-effectful or
-    medium/high-risk tools return a confirmation request unless confirmed=True.
+    medium/high-risk tools require a matching confirmation_id before execution.
     """
 
     def __init__(self, registry, memory_bridge: Optional[NanobotMemoryBridge] = None):
         self.registry = registry
         self.memory = memory_bridge or NanobotMemoryBridge()
         self.recent_plan_context = None
+        self.policy = ActionPolicy(registry)
+        self.pending_confirmations = {}
 
     def list_tools(self) -> List[RuntimeTool]:
         tools = []
@@ -57,45 +60,96 @@ class NanobotRuntimeAdapter:
 
     def call_tool(self, name: str, params: Optional[Dict] = None,
                   confirmed: bool = False,
-                  user_goal: Optional[str] = None) -> RuntimeToolResult:
+                  user_goal: Optional[str] = None,
+                  confirmation_id: Optional[str] = None) -> RuntimeToolResult:
         params = params or {}
-        if not self.registry.has_action(name):
-            result = RuntimeToolResult(
-                tool_name=name,
-                status="error",
-                output=f"Unknown runtime tool: {name}",
+        decision = self.policy.decide(
+            name,
+            params,
+            plan_context=self.recent_plan_context,
+        )
+        if not decision.exists:
+            return self._policy_error(
+                name,
+                params,
+                f"Unknown runtime tool: {name}",
+                decision,
             )
-            self.memory.record_runtime_event(
-                "tool_error",
-                result.output,
-                payload={"params": params},
-                status="error",
-                action_name=name,
+        if not decision.exposed:
+            return self._policy_error(
+                name,
+                params,
+                f"Runtime tool is not available: {name}",
+                decision,
             )
-            return result
 
         metadata = self._metadata(name)
-        if self._requires_confirmation(metadata) and not confirmed:
-            summary = self._confirmation_summary(name, params)
-            result = RuntimeToolResult(
-                tool_name=name,
-                status="requires_confirmation",
-                requires_confirmation=True,
-                confirmation_summary=summary,
-                metadata=metadata,
-            )
-            self.memory.record_runtime_event(
-                "confirmation_required",
-                summary,
-                payload={"params": params, "user_goal": user_goal},
-                action_name=name,
-            )
-            return result
+        if decision.requires_confirmation:
+            if confirmed:
+                pending, error = self._consume_confirmation(
+                    name,
+                    params,
+                    confirmation_id,
+                )
+                if error:
+                    decision.reason = error["reason"]
+                    decision.can_execute = False
+                    decision.confirmation_id = confirmation_id
+                    return self._policy_error(
+                        name,
+                        params,
+                        error["message"],
+                        decision,
+                    )
+                decision.reason = "confirmation_accepted"
+                decision.can_execute = True
+                decision.confirmation_id = confirmation_id
+                decision.params_digest = pending["params_digest"]
+                decision.plan_match = pending["plan_match"]
+            else:
+                decision = self.policy.decide(
+                    name,
+                    params,
+                    plan_context=self.recent_plan_context,
+                    issue_confirmation=True,
+                )
+                self._remember_confirmation(decision)
+                summary = self._confirmation_summary(
+                    name,
+                    params,
+                    decision.plan_match,
+                )
+                result_metadata = self._result_metadata(name, decision)
+                result = RuntimeToolResult(
+                    tool_name=name,
+                    status="requires_confirmation",
+                    requires_confirmation=True,
+                    confirmation_summary=summary,
+                    metadata=result_metadata,
+                )
+                self.memory.record_runtime_event(
+                    "confirmation_required",
+                    summary,
+                    payload={
+                        "params": params,
+                        "user_goal": user_goal,
+                        "policy_decision": decision.to_dict(),
+                    },
+                    action_name=name,
+                )
+                return result
 
+        result_metadata = self._result_metadata(name, decision)
         self.memory.record_runtime_event(
             "tool_call",
             f"Calling runtime tool {name}",
-            payload={"params": params, "confirmed": confirmed, "user_goal": user_goal},
+            payload={
+                "params": params,
+                "confirmed": confirmed,
+                "confirmation_id": confirmation_id,
+                "user_goal": user_goal,
+                "policy_decision": decision.to_dict(),
+            },
             action_name=name,
         )
         output = self.registry.execute(name, params)
@@ -103,7 +157,10 @@ class NanobotRuntimeAdapter:
         self.memory.record_runtime_event(
             "tool_result",
             output,
-            payload={"params": params},
+            payload={
+                "params": params,
+                "policy_decision": decision.to_dict(),
+            },
             status="ok" if status == "executed" else "error",
             action_name=name,
         )
@@ -115,8 +172,70 @@ class NanobotRuntimeAdapter:
             status=status,
             output=output,
             requires_confirmation=False,
-            metadata=metadata,
+            metadata=result_metadata,
         )
+
+    def _policy_error(self, name: str, params: Dict,
+                      message: str, decision) -> RuntimeToolResult:
+        result = RuntimeToolResult(
+            tool_name=name,
+            status="error",
+            output=message,
+            metadata=self._result_metadata(name, decision),
+        )
+        self.memory.record_runtime_event(
+            "tool_error",
+            result.output,
+            payload={
+                "params": params,
+                "policy_decision": decision.to_dict(),
+            },
+            status="error",
+            action_name=name,
+        )
+        return result
+
+    def _remember_confirmation(self, decision) -> None:
+        self.pending_confirmations[decision.confirmation_id] = {
+            "action_name": decision.action_name,
+            "params_digest": decision.params_digest,
+            "plan_match": decision.plan_match,
+        }
+
+    def _consume_confirmation(self, name: str, params: Dict,
+                              confirmation_id: Optional[str]):
+        if not confirmation_id:
+            return None, {
+                "reason": "missing_confirmation_id",
+                "message": "confirmation_id is required for confirmed runtime tool execution.",
+            }
+
+        pending = self.pending_confirmations.get(confirmation_id)
+        if not pending:
+            return None, {
+                "reason": "invalid_confirmation_id",
+                "message": f"Invalid confirmation_id for runtime tool: {name}",
+            }
+
+        if pending["action_name"] != name:
+            return None, {
+                "reason": "confirmation_action_mismatch",
+                "message": f"confirmation_id does not match runtime tool: {name}",
+            }
+
+        params_digest = self.policy.params_digest(params)
+        if pending["params_digest"] != params_digest:
+            return None, {
+                "reason": "params_digest_mismatch",
+                "message": "Runtime tool parameters changed after confirmation was requested.",
+            }
+
+        return self.pending_confirmations.pop(confirmation_id), None
+
+    def _result_metadata(self, name: str, decision) -> dict:
+        metadata = self._metadata(name).copy()
+        metadata["policy_decision"] = decision.to_dict()
+        return metadata
 
     def handle_user_goal(self, user_goal: str,
                          condition_name: Optional[str] = None) -> RuntimeTurnResult:
@@ -152,13 +271,12 @@ class NanobotRuntimeAdapter:
 
     @staticmethod
     def _requires_confirmation(metadata: dict) -> bool:
-        risk_level = metadata.get("risk_level", "medium")
-        side_effects = metadata.get("side_effects", True)
-        return risk_level in {"medium", "high"} or side_effects is not False
+        return ActionPolicy.requires_confirmation(metadata)
 
-    def _confirmation_summary(self, name: str, params: Dict) -> str:
+    def _confirmation_summary(self, name: str, params: Dict,
+                              plan_match: Optional[dict] = None) -> str:
         summary = self.registry.format_action_summary(name, params)
-        if not self._action_matches_recent_plan(name):
+        if not (plan_match or {}).get("matched"):
             return f"Action is not matched to the latest plan; confirm explicitly.\n{summary}"
         return summary
 

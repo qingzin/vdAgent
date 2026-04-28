@@ -10,9 +10,28 @@ tool interface.
 - Export `ActionRegistry` tools as nanobot/MCP-friendly descriptors.
 - Execute low-risk read-only tools directly.
 - Return a confirmation request for medium/high-risk or side-effectful tools.
+- Require a matching `confirmation_id` and unchanged `params_digest` before a
+  confirmation-required tool can execute.
+- Block direct runtime calls to hidden registry actions where `exposed=False`.
 - Route complex chassis goals to planning/knowledge tools before write actions.
 - Map the existing JSONL memory store into session, history, and knowledge
   layers.
+
+## Confirmation Flow
+
+Runtime tools are policy-checked before any callback is invoked.
+
+1. The runtime first verifies that the action exists and is exposed.
+2. Low-risk read-only tools (`risk_level="low"` and `side_effects=False`) run
+   immediately.
+3. Medium-risk, high-risk, or side-effectful tools return
+   `status="requires_confirmation"` without calling the action callback.
+4. The confirmation response includes `metadata.policy_decision`, with a
+   `confirmation_id`, `params_digest`, and `plan_match` summary.
+5. To execute the action, call the same tool again with unchanged params,
+   `confirmed=True`, and the matching `confirmation_id`.
+6. Missing, unknown, mismatched, or stale confirmation ids return
+   `status="error"` and do not call the action callback.
 
 ## Non-goals
 
