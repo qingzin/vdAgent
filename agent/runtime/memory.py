@@ -51,12 +51,32 @@ class NanobotMemoryBridge:
                            condition_name: Optional[str] = None,
                            keyword: Optional[str] = None,
                            limit: int = 5) -> List[dict]:
-        return self.store.query_experience_seeds(
-            action_name=action_name,
-            condition_name=condition_name,
-            keyword=keyword,
-            limit=limit,
-        )
+        if hasattr(self.store, "rank_experience_seeds"):
+            try:
+                return self.store.rank_experience_seeds(
+                    action_name=action_name,
+                    condition_name=condition_name,
+                    keyword=keyword,
+                    limit=limit,
+                )
+            except Exception:
+                pass
+        if hasattr(self.store, "query_experience_seeds"):
+            try:
+                return self.store.query_experience_seeds(
+                    action_name=action_name,
+                    condition_name=condition_name,
+                    keyword=keyword,
+                    limit=limit,
+                )
+            except Exception:
+                pass
+        if hasattr(self.store, "recent_experience_seeds"):
+            try:
+                return self.store.recent_experience_seeds(limit=limit)
+            except Exception:
+                pass
+        return []
 
     def export_layers(self, limit: int = 20) -> Dict[str, List[dict]]:
         traces = self.store.recent_traces(limit=limit)

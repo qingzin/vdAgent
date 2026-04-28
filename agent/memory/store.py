@@ -3,6 +3,7 @@ JSONL-backed process trace and engineering experience memory.
 """
 
 import json
+import re
 from pathlib import Path
 from typing import List, Optional
 
@@ -43,6 +44,12 @@ class NullAgentMemoryStore:
                                condition_name: Optional[str] = None,
                                keyword: Optional[str] = None,
                                limit: int = 20) -> List[dict]:
+        return []
+
+    def rank_experience_seeds(self, action_name: Optional[str] = None,
+                              condition_name: Optional[str] = None,
+                              keyword: Optional[str] = None,
+                              limit: int = 5) -> List[dict]:
         return []
 
 
@@ -100,6 +107,67 @@ class AgentMemoryStore:
             records = [r for r in records if self._seed_matches_keyword(r, needle)]
         return records[-limit:]
 
+    def rank_experience_seeds(self, action_name: Optional[str] = None,
+                              condition_name: Optional[str] = None,
+                              keyword: Optional[str] = None,
+                              limit: int = 5) -> List[dict]:
+        records = self._read_all(self.experience_seeds_path)
+        has_relevance_filter = any([action_name, condition_name, keyword])
+        ranked = []
+        for index, record in enumerate(records):
+            score, reasons, relevance_matched = self._score_experience_seed(
+                record,
+                action_name=action_name,
+                condition_name=condition_name,
+                keyword=keyword,
+            )
+            if has_relevance_filter and not relevance_matched:
+                continue
+            item = dict(record)
+            item["match_score"] = round(score, 3)
+            item["match_reasons"] = reasons
+            ranked.append((item["match_score"], index, item))
+        ranked.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        return [item for _, _, item in ranked[:limit]]
+
+    @classmethod
+    def _score_experience_seed(cls, record: dict,
+                               action_name: Optional[str] = None,
+                               condition_name: Optional[str] = None,
+                               keyword: Optional[str] = None):
+        score = 0.0
+        reasons = []
+        relevance_matched = False
+
+        if condition_name and cls._same_text(record.get("condition_name"), condition_name):
+            score += 4.0
+            relevance_matched = True
+            reasons.append(f"condition exact match: {condition_name}")
+
+        if action_name and cls._same_text(record.get("action_name"), action_name):
+            score += 3.0
+            relevance_matched = True
+            reasons.append(f"action_name match: {action_name}")
+
+        keyword_fields = cls._keyword_match_fields(record, keyword)
+        if keyword_fields:
+            relevance_matched = True
+            for field in keyword_fields:
+                score += 1.0
+                reasons.append(f"keyword match in {field}")
+
+        outcome = str(record.get("outcome") or "")
+        if cls._has_positive_outcome(outcome):
+            score += 1.5
+            reasons.append(f"positive outcome: {outcome}")
+
+        confidence = cls._confidence_value(record.get("confidence"))
+        if confidence is not None:
+            score += confidence
+            reasons.append(f"confidence bonus: {confidence:.2f}")
+
+        return score, reasons, relevance_matched
+
     @staticmethod
     def _seed_matches_keyword(record: dict, needle: str) -> bool:
         fields = [
@@ -116,6 +184,80 @@ class AgentMemoryStore:
         haystack += " " + json.dumps(record.get("params") or {}, ensure_ascii=False)
         haystack += " " + json.dumps(record.get("metrics") or {}, ensure_ascii=False)
         return needle in haystack.lower()
+
+    @staticmethod
+    def _same_text(left, right) -> bool:
+        return str(left or "").strip().lower() == str(right or "").strip().lower()
+
+    @classmethod
+    def _keyword_match_fields(cls, record: dict, keyword: Optional[str]) -> List[str]:
+        if not keyword:
+            return []
+        fields = [
+            "goal",
+            "objective",
+            "lesson",
+            "result",
+            "user_feedback",
+            "outcome",
+            "params",
+            "metrics",
+        ]
+        matched = []
+        for field in fields:
+            value = record.get(field)
+            if field in {"params", "metrics"}:
+                value = json.dumps(value or {}, ensure_ascii=False)
+            if cls._keyword_matches_value(keyword, value):
+                matched.append(field)
+        return matched
+
+    @staticmethod
+    def _keyword_matches_value(keyword: str, value) -> bool:
+        haystack = str(value or "").lower()
+        if not haystack:
+            return False
+        needle = str(keyword or "").strip().lower()
+        if not needle:
+            return False
+        if needle in haystack:
+            return True
+        stop_words = {
+            "and",
+            "for",
+            "from",
+            "please",
+            "suggest",
+            "that",
+            "the",
+            "this",
+            "with",
+        }
+        tokens = [
+            token for token in re.findall(r"\w+", needle)
+            if len(token) >= 3 and token not in stop_words
+        ]
+        return any(token in haystack for token in tokens)
+
+    @staticmethod
+    def _has_positive_outcome(outcome: str) -> bool:
+        text = str(outcome or "").lower()
+        return any(token in text for token in [
+            "improved",
+            "success",
+            "有效",
+            "改善",
+        ])
+
+    @staticmethod
+    def _confidence_value(value) -> Optional[float]:
+        try:
+            confidence = float(value)
+        except (TypeError, ValueError):
+            return None
+        if confidence < 0:
+            return 0.0
+        return min(confidence, 1.0)
 
     @staticmethod
     def _append_jsonl(path: Path, record: dict) -> None:

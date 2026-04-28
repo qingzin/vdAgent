@@ -8,14 +8,33 @@ def _relevant_experience_seeds(condition_name: str = None,
                                keyword: str = None,
                                limit: int = 3) -> list:
     try:
-        return AgentMemoryStore().query_experience_seeds(
-            condition_name=condition_name,
-            keyword=keyword,
-            limit=limit,
-        )
+        store = AgentMemoryStore()
     except Exception:
         return []
-
+    if hasattr(store, "rank_experience_seeds"):
+        try:
+            return store.rank_experience_seeds(
+                condition_name=condition_name,
+                keyword=keyword,
+                limit=limit,
+            )
+        except Exception:
+            pass
+    if hasattr(store, "query_experience_seeds"):
+        try:
+            return store.query_experience_seeds(
+                condition_name=condition_name,
+                keyword=keyword,
+                limit=limit,
+            )
+        except Exception:
+            pass
+    if hasattr(store, "recent_experience_seeds"):
+        try:
+            return store.recent_experience_seeds(limit=limit)
+        except Exception:
+            pass
+    return []
 
 def _plan_chassis_task_text(**kwargs) -> str:
     result = plan_chassis_task(**kwargs)

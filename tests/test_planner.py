@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 from agent.actions import knowledge_actions, planning_actions
 from agent.planner import format_chassis_plan, plan_chassis_task, suggest_chassis_tuning
 from agent.registry import ActionRegistry
@@ -104,3 +106,47 @@ def test_planning_and_knowledge_actions_return_readable_text():
     assert "{'" not in plan_text
     assert "{'" not in suggestion_text
     assert registry.get_metadata("plan_chassis_task")["side_effects"] is False
+
+
+def test_planning_and_knowledge_actions_work_with_empty_memory():
+    class EmptyMemoryStore:
+        def rank_experience_seeds(self, **kwargs):
+            return []
+
+    registry = ActionRegistry()
+    planning_actions.register(registry, ctx=None)
+    knowledge_actions.register(registry, ctx=None)
+
+    with patch.object(planning_actions, "AgentMemoryStore", EmptyMemoryStore):
+        plan_text = registry.execute(
+            "plan_chassis_task",
+            {"goal": "lane change roll tuning"},
+        )
+    with patch.object(knowledge_actions, "AgentMemoryStore", EmptyMemoryStore):
+        suggestion_text = registry.execute(
+            "suggest_chassis_tuning",
+            {"complaint": "center steering heavy"},
+        )
+
+    assert plan_text.startswith("## ")
+    assert suggestion_text.startswith("## ")
+
+
+def test_planning_and_knowledge_actions_work_when_memory_unavailable():
+    registry = ActionRegistry()
+    planning_actions.register(registry, ctx=None)
+    knowledge_actions.register(registry, ctx=None)
+
+    with patch.object(planning_actions, "AgentMemoryStore", side_effect=OSError("readonly")):
+        plan_text = registry.execute(
+            "plan_chassis_task",
+            {"goal": "lane change roll tuning"},
+        )
+    with patch.object(knowledge_actions, "AgentMemoryStore", side_effect=OSError("readonly")):
+        suggestion_text = registry.execute(
+            "suggest_chassis_tuning",
+            {"complaint": "center steering heavy"},
+        )
+
+    assert plan_text.startswith("## ")
+    assert suggestion_text.startswith("## ")

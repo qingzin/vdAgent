@@ -290,6 +290,37 @@ def test_runtime_routes_complex_goal_to_planning_before_write_action(tmp_path):
     )
 
 
+def test_runtime_handle_user_goal_returns_ranked_recalled_experiences(tmp_path):
+    runtime, _ = _build_runtime(tmp_path)
+    runtime.memory.store.append_experience_seed(EngineeringExperienceSeed(
+        action_name="set_antiroll_bar",
+        params={"position": "rear"},
+        result="roll improved",
+        lesson="rear bar helped lane change roll",
+        condition_name="lane_change",
+        outcome="improved",
+        confidence=0.8,
+    ))
+
+    turn = runtime.handle_user_goal(
+        "lane change roll tuning",
+        condition_name="lane_change",
+    )
+
+    assert turn.recalled_experiences
+    recalled = turn.recalled_experiences[0]
+    assert recalled["action_name"] == "set_antiroll_bar"
+    assert recalled["match_score"] > 0
+    assert any(
+        "condition exact match" in reason
+        for reason in recalled["match_reasons"]
+    )
+    assert any(
+        "keyword match" in reason
+        for reason in recalled["match_reasons"]
+    )
+
+
 def test_runtime_routes_suggest_goal_to_knowledge_tool(tmp_path):
     runtime, counters = _build_runtime(tmp_path)
 

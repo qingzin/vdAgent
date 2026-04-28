@@ -16,6 +16,19 @@ tool interface.
 - Route complex chassis goals to planning/knowledge tools before write actions.
 - Map the existing JSONL memory store into session, history, and knowledge
   layers.
+- Prefer explainable ranked experience recall when the memory store supports
+  it, while falling back to legacy query/recent recall for older stores.
+
+## Ranked Experience Recall
+
+`NanobotMemoryBridge.recall_experiences(...)` first tries
+`rank_experience_seeds(...)`. Ranked results include `match_score` and
+`match_reasons`, so `handle_user_goal(...)` can return planner-ready recall
+context without changing the tool execution flow.
+
+The scorer is deterministic and dependency-free. It gives small bonuses for
+condition exact matches, action matches, keyword hits in experience fields,
+positive outcome wording, and higher numeric confidence.
 
 ## Plan Step Schema
 

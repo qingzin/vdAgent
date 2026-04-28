@@ -50,3 +50,77 @@ def test_memory_store_filters_experience_seeds(tmp_path):
     assert [seed["action_name"] for seed in by_condition] == ["set_antiroll_bar"]
     assert [seed["condition_name"] for seed in by_action] == ["bump"]
     assert [seed["goal"] for seed in by_keyword] == ["reduce roll"]
+
+
+def test_memory_store_ranks_experience_seeds_by_relevance(tmp_path):
+    store = AgentMemoryStore(base_dir=str(tmp_path))
+    store.append_experience_seed(EngineeringExperienceSeed(
+        action_name="set_antiroll_bar",
+        params={"position": "rear"},
+        result="roll improved",
+        lesson="rear bar helped roll response",
+        condition_name="lane_change",
+        outcome="improved",
+        confidence=0.6,
+    ))
+    store.append_experience_seed(EngineeringExperienceSeed(
+        action_name="set_spring",
+        params={"position": "front"},
+        result="roll response success",
+        lesson="spring change improved roll control",
+        condition_name="lane_change",
+        outcome="success",
+        confidence=0.9,
+    ))
+    store.append_experience_seed(EngineeringExperienceSeed(
+        action_name="set_spring",
+        params={"position": "rear"},
+        result="ride comfort improved",
+        lesson="bump ride stayed controlled",
+        condition_name="bump",
+        outcome="improved",
+        confidence=1.0,
+    ))
+
+    ranked = store.rank_experience_seeds(
+        action_name="set_spring",
+        condition_name="lane_change",
+        keyword="roll",
+        limit=3,
+    )
+
+    assert [seed["condition_name"] for seed in ranked] == [
+        "lane_change",
+        "lane_change",
+        "bump",
+    ]
+    assert ranked[0]["action_name"] == "set_spring"
+    assert ranked[0]["match_score"] > ranked[1]["match_score"]
+    assert ranked[1]["match_score"] > ranked[2]["match_score"]
+    assert "match_score" not in store.query_experience_seeds(keyword="roll")[0]
+
+
+def test_memory_store_rank_reasons_explain_matches(tmp_path):
+    store = AgentMemoryStore(base_dir=str(tmp_path))
+    store.append_experience_seed(EngineeringExperienceSeed(
+        action_name="set_spring",
+        params={"position": "front", "note": "roll support"},
+        result="roll improved",
+        lesson="front spring helped roll",
+        condition_name="lane_change",
+        outcome="improved",
+        confidence=0.75,
+    ))
+
+    ranked = store.rank_experience_seeds(
+        action_name="set_spring",
+        condition_name="lane_change",
+        keyword="roll",
+    )
+    reasons = ranked[0]["match_reasons"]
+
+    assert any("action_name match" in reason for reason in reasons)
+    assert any("condition exact match" in reason for reason in reasons)
+    assert any("keyword match in lesson" in reason for reason in reasons)
+    assert any("positive outcome" in reason for reason in reasons)
+    assert any("confidence bonus" in reason for reason in reasons)

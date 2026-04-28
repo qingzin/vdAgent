@@ -39,3 +39,13 @@ Conflict/reasonableness check: this deliberately tightens the earlier runtime Po
 - Cover planner schema, runtime metadata visibility, and policy matching priority with tests.
 
 Conflict/reasonableness check: this is compatible with the prior structured planning and runtime safety work because it enriches existing plan context instead of adding autonomous execution, new dependencies, or GUI changes.
+
+## 2026-04-28 - Explainable ranked experience recall
+
+- Keep the existing `query_experience_seeds(...)` filter behavior unchanged for compatibility.
+- Add ranked recall through `rank_experience_seeds(...)`, returning each recalled seed with `match_score` and `match_reasons`.
+- Score condition exact matches, action matches, keyword hits in goal/objective/lesson/result/user_feedback/outcome/params/metrics, positive outcome wording, and numeric confidence.
+- Make runtime, planning, and knowledge recall prefer ranked recall, with fallback to query/recent memory when a store does not support ranking.
+- Ensure `handle_user_goal(...)` exposes ranked `recalled_experiences` for later planner use, and keep planning/knowledge actions safe with empty or unavailable memory.
+
+Conflict/reasonableness check: this is a minimal deterministic scorer over the existing JSONL memory. It avoids new dependencies and does not replace the current planner, runtime policy, storage format, or GUI flow.

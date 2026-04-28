@@ -143,4 +143,15 @@ agent/actions/* + agent/memory/*
 Existing PyQt GUI / CarSim / Simulator workflow
 ```
 
+## 7. 2026-04-28 Ranked Recall Update
+
+- `AgentMemoryStore.rank_experience_seeds(...)` now provides explainable
+  ranked recall while preserving the old `query_experience_seeds(...)`
+  compatibility path.
+- Runtime, planning, and knowledge recall prefer ranked results and fall back
+  to legacy query/recent recall when the active store does not support ranking.
+- `NanobotRuntimeAdapter.handle_user_goal(...)` returns recalled experiences
+  with `match_score` and `match_reasons`, so a later planner layer can inspect
+  why a seed was recalled.
+
 本分支的关键价值是增加了一个“运行时边界”。后续可以在这个边界外接 nanobot，也可以继续保留当前 GUI agent，不需要一次性推倒重构。
