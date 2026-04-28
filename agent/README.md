@@ -172,6 +172,20 @@ AgentExecutor.MAX_HISTORY = 10   # 或在 bootstrap 里传参
 python -m pytest tests
 ```
 
+## 独立 Agent 窗口
+
+当前分支新增了一个不依赖 `main.py` / `SimulatorUI` 的独立入口:
+
+```bash
+python run_standalone_agent.py --llm-url http://127.0.0.1:8080
+```
+
+独立窗口包含聊天区、确认/取消操作区、执行历史、状态变更、当前状态快照和 action 列表。它复用 `AgentExecutor`、`ActionRegistry` 和现有 `actions/*`，但通过 `agent/standalone_state.py` 提供内存态 simulator adapter，避免启动 `main.py` 时触发 CarSim COM、UDP socket 和原 GUI 初始化。
+
+设计目标是先覆盖当前 agent 已暴露的底盘业务 action 语义，包括车型/悬架/稳定杆、触感、仿真、记录、平台、场景、视觉补偿、绘图/报警、规划和知识建议。后续接入真实 CarSim 或自研控制软件时，应在 standalone adapter 后增加真实 service/adapter，而不是让独立窗口反向依赖 `main.py`。
+
+GitHub 上调研过 `yjg30737/pyqt-openai`、`szczyglis-dev/py-gpt` 等 PyQt 桌面助手项目。结论是可借鉴“聊天 + 历史 + 工具/状态面板”的布局，但不直接引入外部前端底座，原因是当前项目已在 PyQt5 体系内，直接复用现有 agent 内核和 action 层成本更低、风险更小。
+
 如果当前环境未安装 pytest, 至少做语法检查:
 
 ```bash

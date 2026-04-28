@@ -9,8 +9,16 @@
 """
 
 import re
-from PyQt5.QtGui import QImage, QPixmap
-from PyQt5.QtCore import Qt
+try:
+    from PyQt5.QtGui import QImage, QPixmap
+    from PyQt5.QtCore import Qt
+except ImportError:  # pragma: no cover - allows headless service tests.
+    QImage = None
+    QPixmap = None
+
+    class Qt:
+        KeepAspectRatio = None
+        SmoothTransformation = None
 
 from ._helpers import require_not_recording, fuzzy_resolve
 
@@ -52,7 +60,7 @@ def _register_select_vehicle(registry, ctx):
         ui.carName = vehicle_name
         ui.select_car_button.setText(vehicle_name)
         img_path = vehicle_image_path.get(vehicle_name, '')
-        if img_path:
+        if img_path and QImage is not None and QPixmap is not None:
             image = QImage(img_path)
             pixmap = QPixmap.fromImage(image).scaled(
                 200, 120, Qt.KeepAspectRatio, Qt.SmoothTransformation)

@@ -18,6 +18,7 @@ from agent.actions import (
     haptic_actions,
     platform_actions,
     scene_actions,
+    plot_actions,
     visual_actions,
     misc_actions,
     planning_actions,
@@ -32,6 +33,7 @@ ACTION_MODULES = [
     haptic_actions,      # 触感力反馈
     platform_actions,    # 平台准备/一键启停
     scene_actions,       # 工况/地图/起点/确认
+    plot_actions,        # 绘图/报警
     visual_actions,      # 视觉补偿
     misc_actions,        # 评价元数据
     planning_actions,    # 底盘任务规划
