@@ -20,6 +20,7 @@ KEY_EXPERIENCE_ACTIONS = {
     "start_recording",
     "stop_recording",
 }
+SETUP_SNAPSHOT_ACTIONS = {"set_spring", "set_antiroll_bar"}
 
 
 class NanobotRuntimeAdapter:
@@ -140,6 +141,7 @@ class NanobotRuntimeAdapter:
                 return result
 
         result_metadata = self._result_metadata(name, decision)
+        before_setup = self._capture_setup_snapshot(name, "before")
         self.memory.record_runtime_event(
             "tool_call",
             f"Calling runtime tool {name}",
@@ -153,6 +155,7 @@ class NanobotRuntimeAdapter:
             action_name=name,
         )
         output = self.registry.execute(name, params)
+        after_setup = self._capture_setup_snapshot(name, "after")
         status = "error" if self._looks_like_error(output) else "executed"
         self.memory.record_runtime_event(
             "tool_result",
@@ -168,7 +171,14 @@ class NanobotRuntimeAdapter:
             plan_context_payload = self._capture_plan_context(name, params)
             if plan_context_payload:
                 result_metadata["plan_context"] = plan_context_payload
-            self._write_experience_seed(name, params, output, metadata)
+            self._write_experience_seed(
+                name,
+                params,
+                output,
+                metadata,
+                before_setup=before_setup,
+                after_setup=after_setup,
+            )
         return RuntimeToolResult(
             tool_name=name,
             status=status,
@@ -330,11 +340,34 @@ class NanobotRuntimeAdapter:
             "allowed_actions": plan_context.get("allowed_actions", []),
         }
 
+    def _capture_setup_snapshot(self, action_name: str, timing: str) -> Optional[Dict]:
+        if action_name not in SETUP_SNAPSHOT_ACTIONS:
+            return None
+        if not self.registry.has_action("get_current_setup"):
+            return None
+        metadata = self._metadata("get_current_setup")
+        if ActionPolicy.requires_confirmation(metadata):
+            return None
+        try:
+            output = self.registry.execute("get_current_setup", {})
+        except Exception:
+            return None
+        if self._looks_like_error(output):
+            return None
+        return {
+            "source": "get_current_setup",
+            "timing": timing,
+            "text": output,
+        }
+
     def _write_experience_seed(self, name: str, params: Dict,
-                               output: str, metadata: dict) -> None:
+                               output: str, metadata: dict,
+                               before_setup: Optional[Dict] = None,
+                               after_setup: Optional[Dict] = None) -> None:
         if name not in KEY_EXPERIENCE_ACTIONS:
             return
         plan = self.recent_plan_context or {}
+        next_action = plan.get("next_action") if isinstance(plan.get("next_action"), dict) else {}
         try:
             self.memory.store.append_experience_seed(EngineeringExperienceSeed(
                 action_name=name,
@@ -342,7 +375,16 @@ class NanobotRuntimeAdapter:
                 result=output,
                 lesson=f"Runtime confirmed {name} with params={params}; result={output}",
                 goal=plan.get("goal"),
+                plan_id=plan.get("plan_id"),
+                step_id=(
+                    next_action.get("step_id")
+                    or plan.get("current_step_id")
+                ),
+                plan_goal=plan.get("goal"),
+                next_action=next_action or None,
                 condition_name=params.get("condition_name") or plan.get("condition_name"),
+                before_setup=before_setup,
+                after_setup=after_setup,
                 risk_level=metadata.get("risk_level", "medium"),
             ))
         except Exception:

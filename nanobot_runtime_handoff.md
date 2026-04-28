@@ -154,4 +154,13 @@ Existing PyQt GUI / CarSim / Simulator workflow
   with `match_score` and `match_reasons`, so a later planner layer can inspect
   why a seed was recalled.
 
+## 8. 2026-04-28 Enriched Seed Context
+
+- Experience seeds can now carry `plan_id`, `step_id`, `plan_goal`, and
+  `next_action`, linking a confirmed action back to the structured plan that
+  produced it.
+- Runtime-confirmed tuning actions try to capture `get_current_setup` before
+  and after execution as text snapshots. This is best effort only; failures do
+  not block the main action.
+
 本分支的关键价值是增加了一个“运行时边界”。后续可以在这个边界外接 nanobot，也可以继续保留当前 GUI agent，不需要一次性推倒重构。

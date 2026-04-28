@@ -397,6 +397,7 @@ class AgentExecutor(QObject):
             metadata = self.registry.get_metadata(action_name)
         lesson = f"Confirmed {action_name} with params={params}; result={result}"
         plan = self.recent_plan_context or {}
+        next_action = plan.get("next_action") if isinstance(plan.get("next_action"), dict) else {}
         try:
             self.memory_store.append_experience_seed(EngineeringExperienceSeed(
                 action_name=action_name,
@@ -404,6 +405,13 @@ class AgentExecutor(QObject):
                 result=result,
                 lesson=lesson,
                 goal=plan.get("goal"),
+                plan_id=plan.get("plan_id"),
+                step_id=(
+                    next_action.get("step_id")
+                    or plan.get("current_step_id")
+                ),
+                plan_goal=plan.get("goal"),
+                next_action=next_action or None,
                 condition_name=(
                     params.get("condition_name") if isinstance(params, dict) else None
                 ) or plan.get("condition_name"),

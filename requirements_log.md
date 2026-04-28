@@ -49,3 +49,16 @@ Conflict/reasonableness check: this is compatible with the prior structured plan
 - Ensure `handle_user_goal(...)` exposes ranked `recalled_experiences` for later planner use, and keep planning/knowledge actions safe with empty or unavailable memory.
 
 Conflict/reasonableness check: this is a minimal deterministic scorer over the existing JSONL memory. It avoids new dependencies and does not replace the current planner, runtime policy, storage format, or GUI flow.
+
+## 2026-04-28 - Enriched experience seed context
+
+- Extend engineering experience seeds with optional `plan_id`, `step_id`,
+  `plan_goal`, and `next_action` fields so later recall can connect an action
+  result to the plan step that produced it.
+- Make executor and runtime writes include available recent plan context without
+  changing existing seed fields.
+- Let the runtime capture best-effort `get_current_setup` before/after snapshots
+  for configuration-changing tuning actions. Snapshot failures are ignored and
+  never block the primary action.
+
+Conflict/reasonableness check: this strengthens learning trace quality while keeping the JSONL store, GUI flow, and action execution semantics unchanged.

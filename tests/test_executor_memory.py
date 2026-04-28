@@ -49,6 +49,37 @@ def test_confirm_action_writes_trace_and_experience_seed(tmp_path):
     assert seeds[-1]["params"]["spring_name"] == "K1"
 
 
+def test_confirm_action_experience_seed_includes_plan_context(tmp_path):
+    registry = ActionRegistry()
+    registry.register(
+        name="set_spring",
+        description="set spring",
+        params_schema={"type": "object", "properties": {}, "required": []},
+        callback=lambda position, spring_name: "ok",
+        category="tuning",
+        risk_level="high",
+        exposed=True,
+    )
+    store = AgentMemoryStore(base_dir=str(tmp_path))
+    executor = AgentExecutor(registry, llm_client=None, memory_store=store)
+    executor.recent_plan_context = plan_chassis_task(
+        goal="lane change roll tuning",
+        condition_name="lane_change",
+    )
+    executor._pending_action = (
+        "set_spring",
+        {"position": "front", "spring_name": "K1"},
+    )
+
+    executor.confirm_action()
+
+    seed = store.query_experience_seeds(action_name="set_spring")[-1]
+    assert seed["plan_id"] == executor.recent_plan_context["plan_id"]
+    assert seed["step_id"] == executor.recent_plan_context["current_step_id"]
+    assert seed["plan_goal"] == "lane change roll tuning"
+    assert seed["next_action"]["step_id"] == executor.recent_plan_context["current_step_id"]
+
+
 def test_planning_action_auto_executes_without_pending_confirm(tmp_path):
     registry = ActionRegistry()
     registry.register(

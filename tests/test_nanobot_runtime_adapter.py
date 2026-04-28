@@ -231,6 +231,10 @@ def test_runtime_rejects_confirmation_when_params_change(tmp_path):
 
 def test_runtime_confirmed_high_risk_action_with_matching_id_writes_experience(tmp_path):
     runtime, counters = _build_runtime(tmp_path)
+    runtime.recent_plan_context = plan_chassis_task(
+        goal="lane change roll tuning",
+        condition_name="lane_change",
+    )
 
     requested = runtime.call_tool(
         "set_spring",
@@ -249,6 +253,48 @@ def test_runtime_confirmed_high_risk_action_with_matching_id_writes_experience(t
     assert counters["set_spring"] == 1
     assert seeds[-1]["condition_name"] == "lane_change"
     assert seeds[-1]["risk_level"] == "high"
+    assert seeds[-1]["plan_id"] == runtime.recent_plan_context["plan_id"]
+    assert seeds[-1]["step_id"] == runtime.recent_plan_context["current_step_id"]
+    assert seeds[-1]["plan_goal"] == "lane change roll tuning"
+    assert seeds[-1]["next_action"]["step_id"] == runtime.recent_plan_context["current_step_id"]
+    assert seeds[-1]["before_setup"]["source"] == "get_current_setup"
+    assert seeds[-1]["after_setup"]["source"] == "get_current_setup"
+
+
+def test_runtime_confirmed_high_risk_action_without_setup_snapshot_still_executes(tmp_path):
+    counters = {}
+    registry = ActionRegistry()
+    registry.register(
+        name="set_spring",
+        description="set spring",
+        params_schema={"type": "object", "properties": {}, "required": []},
+        callback=lambda position, spring_name: counters.setdefault("set_spring", 1) and "ok",
+        category="tuning",
+        risk_level="high",
+        exposed=True,
+        side_effects=True,
+    )
+    runtime = NanobotRuntimeAdapter(
+        registry,
+        NanobotMemoryBridge(AgentMemoryStore(base_dir=str(tmp_path))),
+    )
+
+    requested = runtime.call_tool(
+        "set_spring",
+        {"position": "front", "spring_name": "K1"},
+    )
+    result = runtime.call_tool(
+        "set_spring",
+        {"position": "front", "spring_name": "K1"},
+        confirmed=True,
+        confirmation_id=requested.metadata["policy_decision"]["confirmation_id"],
+    )
+    seed = runtime.memory.recall_experiences(action_name="set_spring")[-1]
+
+    assert result.status == "executed"
+    assert counters["set_spring"] == 1
+    assert seed["before_setup"] is None
+    assert seed["after_setup"] is None
 
 
 def test_runtime_requires_confirmation_for_medium_and_low_side_effect_actions(tmp_path):

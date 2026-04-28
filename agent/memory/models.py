@@ -33,6 +33,10 @@ class EngineeringExperienceSeed:
     result: str = ""
     lesson: str = ""
     goal: Optional[str] = None
+    plan_id: Optional[str] = None
+    step_id: Optional[str] = None
+    plan_goal: Optional[str] = None
+    next_action: Optional[Dict[str, Any]] = None
     objective: Optional[str] = None
     condition_name: Optional[str] = None
     before_setup: Optional[Dict[str, Any]] = None
