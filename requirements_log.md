@@ -9,3 +9,11 @@
 - Cover the behavior with pytest tests that avoid GUI and hardware dependencies.
 
 Conflict/reasonableness check: this aligns with the existing single-tool executor design because it adds context and confirmation guidance without introducing an autonomous multi-step executor, third-party dependencies, or GUI flow changes.
+
+## 2026-04-28 - Nanobot migration runtime PoC
+
+- Add a runtime adapter seam under `agent/runtime/` so vdAgent actions can be exposed as nanobot/MCP-friendly tools without replacing the current GUI flow.
+- Preserve existing safety behavior: low-risk read-only tools execute directly, while medium/high-risk or side-effectful tools return a confirmation request unless explicitly confirmed.
+- Add a nanobot-style memory bridge over the existing JSONL store, grouped as session, history, and knowledge layers.
+- Add a PoC route where complex chassis goals are handled by planning/knowledge tools first instead of directly calling write actions.
+- Keep this as an integration seam only: no nanobot dependency, no autonomous multi-step executor, and no `main.py` changes.
