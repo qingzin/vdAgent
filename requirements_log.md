@@ -29,3 +29,13 @@ Conflict/reasonableness check: this is compatible with the structured planning c
 - Add tests for hidden action blocking, high-risk confirmation id validation, medium/side-effect confirmation requirements, suggest routing, and knowledge layer export.
 
 Conflict/reasonableness check: this deliberately tightens the earlier runtime PoC behavior where `confirmed=True` alone was enough. The change is reasonable because it preserves the public call shape while closing a runtime safety bypass, and it avoids new dependencies, schema changes, or GUI changes.
+
+## 2026-04-28 - Executable plan next action schema
+
+- Extend planner dicts with `current_step_id`, `next_action`, and `allowed_actions` so the runtime can identify the smallest executable next action without changing existing readable plan text.
+- Make schema normalization detect multiple action names mentioned inside one recommended step and expose all of them through `allowed_actions`.
+- Persist `current_step_id`, `next_action`, and `allowed_actions` in runtime plan-context trace payloads, and expose the same summary through planning tool metadata.
+- Make runtime policy plan matching prefer `next_action` and `allowed_actions`, while keeping legacy `steps` matching as a fallback.
+- Cover planner schema, runtime metadata visibility, and policy matching priority with tests.
+
+Conflict/reasonableness check: this is compatible with the prior structured planning and runtime safety work because it enriches existing plan context instead of adding autonomous execution, new dependencies, or GUI changes.

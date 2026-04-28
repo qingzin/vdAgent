@@ -2,7 +2,7 @@ from agent.memory.models import EngineeringExperienceSeed
 from agent.memory.store import AgentMemoryStore
 from agent.planner import format_chassis_plan, plan_chassis_task, suggest_chassis_tuning
 from agent.registry import ActionRegistry
-from agent.runtime import NanobotMemoryBridge, NanobotRuntimeAdapter
+from agent.runtime import ActionPolicy, NanobotMemoryBridge, NanobotRuntimeAdapter
 
 
 def _build_runtime(tmp_path, counters=None):
@@ -272,8 +272,18 @@ def test_runtime_routes_complex_goal_to_planning_before_write_action(tmp_path):
     assert turn.selected_tool == "plan_chassis_task"
     assert turn.tool_result.status == "executed"
     assert runtime.recent_plan_context["plan_id"].startswith("plan_")
+    plan_context = turn.tool_result.metadata["plan_context"]
+    assert plan_context["current_step_id"] == plan_context["next_action"]["step_id"]
+    assert plan_context["next_action"]["action_name"]
+    assert plan_context["allowed_actions"]
     assert counters.get("set_spring", 0) == 0
     assert any(item["event_type"] == "runtime_session_message" for item in layers["session"])
+    saved_events = [
+        item for item in layers["history"]
+        if item["event_type"] == "runtime_plan_context_saved"
+    ]
+    assert saved_events[-1]["payload"]["next_action"] == plan_context["next_action"]
+    assert saved_events[-1]["payload"]["allowed_actions"] == plan_context["allowed_actions"]
     assert any(
         item["event_type"] == "runtime_plan_context_saved"
         for item in layers["history"]
@@ -305,3 +315,43 @@ def test_runtime_exports_knowledge_layer(tmp_path):
 
     assert layers["knowledge"][-1]["action_name"] == "set_antiroll_bar"
     assert layers["knowledge"][-1]["condition_name"] == "lane_change"
+
+
+def test_policy_prefers_next_action_and_allowed_actions_before_steps():
+    next_match = ActionPolicy.plan_match("set_spring", {
+        "plan_id": "plan_test",
+        "current_step_id": "step_next",
+        "next_action": {
+            "action_name": "set_spring",
+            "step_id": "step_next",
+            "description": "next action",
+        },
+        "allowed_actions": [],
+        "steps": [{
+            "step_id": "step_fallback",
+            "action_name": "set_spring",
+            "description": "legacy fallback",
+        }],
+    })
+    allowed_match = ActionPolicy.plan_match("set_antiroll_bar", {
+        "plan_id": "plan_test",
+        "allowed_actions": ["set_antiroll_bar"],
+        "steps": [{
+            "step_id": "step_fallback",
+            "action_name": "set_antiroll_bar",
+            "description": "legacy fallback",
+        }],
+    })
+    fallback_match = ActionPolicy.plan_match("run_carsim", {
+        "plan_id": "plan_test",
+        "steps": [{
+            "step_id": "step_fallback",
+            "action_name": "run_carsim",
+            "description": "legacy fallback",
+        }],
+    })
+
+    assert next_match["reason"] == "action_found_in_next_action"
+    assert next_match["step_id"] == "step_next"
+    assert allowed_match["reason"] == "action_found_in_allowed_actions"
+    assert fallback_match["reason"] == "action_found_in_recent_plan"

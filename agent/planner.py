@@ -5,6 +5,31 @@ Rule-based chassis planning and tuning suggestions.
 from hashlib import sha1
 
 
+ACTION_NAMES = [
+    "get_current_setup",
+    "prepare_test_scene",
+    "prepare_recording_session",
+    "start_recording",
+    "stop_recording",
+    "set_antiroll_bar",
+    "set_spring",
+    "tune_haptic_feedback",
+    "run_carsim",
+    "analyze_offline_result",
+    "plan_chassis_task",
+    "suggest_chassis_tuning",
+]
+
+SIDE_EFFECT_ACTION_PREFIXES = (
+    "set_",
+    "tune_",
+    "prepare_",
+    "start_",
+    "stop_",
+    "run_",
+)
+
+
 def _text(*parts) -> str:
     return " ".join(str(p or "") for p in parts).lower()
 
@@ -33,25 +58,132 @@ def _base_response(kind: str, goal: str = None, complaint: str = None,
 
 
 def _infer_action_name(description: str) -> str:
+    action_names = _infer_action_names(description)
+    return action_names[0] if action_names else "review_with_engineer"
+
+
+def _infer_action_names(description: str) -> list:
     text = str(description or "")
-    action_names = [
-        "get_current_setup",
-        "prepare_test_scene",
-        "prepare_recording_session",
-        "start_recording",
-        "stop_recording",
-        "set_antiroll_bar",
-        "set_spring",
-        "tune_haptic_feedback",
-        "run_carsim",
-        "analyze_offline_result",
-        "plan_chassis_task",
-        "suggest_chassis_tuning",
+    return [action_name for action_name in ACTION_NAMES if action_name in text]
+
+
+def _action_risk_level(action_name: str) -> str:
+    if str(action_name or "").startswith(SIDE_EFFECT_ACTION_PREFIXES):
+        return "high"
+    return "low"
+
+
+def _unique_action_names(action_names) -> list:
+    unique = []
+    seen = set()
+    for action_name in action_names or []:
+        if not action_name or action_name in seen:
+            continue
+        seen.add(action_name)
+        unique.append(action_name)
+    return unique
+
+
+def _normalize_action_names(values) -> list:
+    if not isinstance(values, list):
+        return []
+    action_names = []
+    for value in values:
+        if isinstance(value, dict):
+            action_names.append(value.get("action_name"))
+        else:
+            action_names.append(value)
+    return _unique_action_names(action_names)
+
+
+def _normalize_plan_step(result: dict, step, index: int) -> dict:
+    plan_id = result["plan_id"]
+    validation = list(result.get("validation_metrics", []))
+    if not isinstance(step, dict):
+        step = {"description": str(step)}
+    step.setdefault("step_id", f"{plan_id}_step_{index}")
+    step.setdefault("description", "")
+
+    mentioned_actions = _infer_action_names(step.get("description"))
+    if not step.get("action_name"):
+        step["action_name"] = (
+            mentioned_actions[0] if mentioned_actions else "review_with_engineer"
+        )
+    step["allowed_actions"] = _unique_action_names(
+        _normalize_action_names(step.get("allowed_actions"))
+        + mentioned_actions
+        + [step.get("action_name")]
+    )
+    step.setdefault("params_needed", [])
+    step.setdefault("risk_level", _action_risk_level(step.get("action_name")))
+    step.setdefault("preconditions", [])
+    step.setdefault("validation", validation)
+    return step
+
+
+def _select_next_action_step(steps: list, current_step_id: str = None):
+    if current_step_id:
+        for step in steps:
+            if step.get("step_id") == current_step_id:
+                return step
+    for step in steps:
+        allowed_actions = [
+            action_name for action_name in step.get("allowed_actions", [])
+            if action_name != "review_with_engineer"
+        ]
+        if allowed_actions:
+            return step
+    return steps[0] if steps else None
+
+
+def _build_next_action(result: dict, step: dict) -> dict:
+    validation = list(result.get("validation_metrics", []))
+    existing = result.get("next_action") if isinstance(result.get("next_action"), dict) else {}
+    if not step:
+        return {
+            "action_name": existing.get("action_name", "review_with_engineer"),
+            "step_id": existing.get("step_id"),
+            "description": existing.get("description", ""),
+            "params_needed": existing.get("params_needed", []),
+            "risk_level": existing.get("risk_level", "low"),
+            "validation": existing.get("validation", validation),
+        }
+
+    allowed_actions = [
+        action_name for action_name in step.get("allowed_actions", [])
+        if action_name != "review_with_engineer"
     ]
-    for action_name in action_names:
-        if action_name in text:
-            return action_name
-    return "review_with_engineer"
+    action_name = existing.get("action_name") or (
+        allowed_actions[0] if allowed_actions else step.get("action_name")
+    )
+    return {
+        "action_name": action_name,
+        "step_id": existing.get("step_id") or step.get("step_id"),
+        "description": existing.get("description") or step.get("description", ""),
+        "params_needed": existing.get("params_needed") or list(step.get("params_needed", [])),
+        "risk_level": existing.get("risk_level") or step.get("risk_level") or _action_risk_level(action_name),
+        "validation": existing.get("validation") or list(step.get("validation", validation)),
+    }
+
+
+def _collect_allowed_actions(result: dict) -> list:
+    action_names = []
+    next_action = result.get("next_action")
+    if isinstance(next_action, dict):
+        action_names.append(next_action.get("action_name"))
+    action_names.extend(_normalize_action_names(result.get("allowed_actions")))
+    for step in result.get("steps", []):
+        if not isinstance(step, dict):
+            continue
+        action_names.extend(_normalize_action_names(step.get("allowed_actions")))
+        action_names.extend(_infer_action_names(step.get("description")))
+        action_names.append(step.get("action_name"))
+    unique = _unique_action_names(action_names)
+    executable_actions = [
+        action_name for action_name in unique
+        if action_name != "review_with_engineer"
+    ]
+    return executable_actions or unique
 
 
 def _ensure_plan_schema(result: dict) -> dict:
@@ -72,17 +204,23 @@ def _ensure_plan_schema(result: dict) -> dict:
     if not result.get("steps"):
         steps = []
         for index, description in enumerate(result.get("recommended_steps", []), start=1):
-            action_name = _infer_action_name(description)
-            steps.append({
+            steps.append(_normalize_plan_step(result, {
                 "step_id": f"{result['plan_id']}_step_{index}",
-                "action_name": action_name,
                 "description": str(description),
-                "params_needed": [],
-                "risk_level": "high" if action_name.startswith(("set_", "tune_", "prepare_", "start_", "stop_", "run_")) else "low",
-                "preconditions": [],
-                "validation": list(result.get("validation_metrics", [])),
-            })
+            }, index))
         result["steps"] = steps
+    else:
+        result["steps"] = [
+            _normalize_plan_step(result, step, index)
+            for index, step in enumerate(result.get("steps", []), start=1)
+        ]
+    current_step = _select_next_action_step(
+        result.get("steps", []),
+        result.get("current_step_id"),
+    )
+    result["next_action"] = _build_next_action(result, current_step)
+    result["current_step_id"] = result["next_action"].get("step_id")
+    result["allowed_actions"] = _collect_allowed_actions(result)
     return result
 
 

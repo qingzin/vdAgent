@@ -123,20 +123,52 @@ class ActionPolicy:
                 "step_id": None,
             }
 
+        next_action = plan_context.get("next_action")
+        if isinstance(next_action, dict) and next_action.get("action_name") == action_name:
+            return {
+                "matched": True,
+                "reason": "action_found_in_next_action",
+                "plan_id": plan_context.get("plan_id"),
+                "step_id": (
+                    next_action.get("step_id")
+                    or plan_context.get("current_step_id")
+                ),
+                "description": next_action.get("description"),
+            }
+
         steps = plan_context.get("steps", [])
         if not isinstance(steps, list):
             steps = []
-        for step in steps:
-            if not isinstance(step, dict):
-                continue
-            if step.get("action_name") == action_name:
-                return {
-                    "matched": True,
-                    "reason": "action_found_in_recent_plan",
-                    "plan_id": plan_context.get("plan_id"),
-                    "step_id": step.get("step_id"),
-                    "description": step.get("description"),
-                }
+        allowed_action = ActionPolicy._find_allowed_action(
+            action_name,
+            plan_context.get("allowed_actions"),
+        )
+        if allowed_action is not None:
+            step = ActionPolicy._find_step_match(action_name, steps)
+            return {
+                "matched": True,
+                "reason": "action_found_in_allowed_actions",
+                "plan_id": plan_context.get("plan_id"),
+                "step_id": (
+                    allowed_action.get("step_id")
+                    or (step or {}).get("step_id")
+                    or plan_context.get("current_step_id")
+                ),
+                "description": (
+                    allowed_action.get("description")
+                    or (step or {}).get("description")
+                ),
+            }
+
+        step = ActionPolicy._find_step_match(action_name, steps)
+        if step is not None:
+            return {
+                "matched": True,
+                "reason": "action_found_in_recent_plan",
+                "plan_id": plan_context.get("plan_id"),
+                "step_id": step.get("step_id"),
+                "description": step.get("description"),
+            }
 
         return {
             "matched": False,
@@ -144,6 +176,30 @@ class ActionPolicy:
             "plan_id": plan_context.get("plan_id"),
             "step_id": None,
         }
+
+    @staticmethod
+    def _find_allowed_action(action_name: str, allowed_actions) -> Optional[Dict[str, Any]]:
+        if not isinstance(allowed_actions, list):
+            return None
+        for item in allowed_actions:
+            if isinstance(item, dict):
+                if item.get("action_name") == action_name:
+                    return item
+            elif item == action_name:
+                return {"action_name": item}
+        return None
+
+    @staticmethod
+    def _find_step_match(action_name: str, steps: list) -> Optional[Dict[str, Any]]:
+        for step in steps:
+            if not isinstance(step, dict):
+                continue
+            if step.get("action_name") == action_name:
+                return step
+            allowed_actions = step.get("allowed_actions")
+            if isinstance(allowed_actions, list) and action_name in allowed_actions:
+                return step
+        return None
 
     def _metadata(self, action_name: str) -> Dict[str, Any]:
         if hasattr(self.registry, "get_metadata"):

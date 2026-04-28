@@ -17,6 +17,21 @@ tool interface.
 - Map the existing JSONL memory store into session, history, and knowledge
   layers.
 
+## Plan Step Schema
+
+Planning tools still return the existing readable Markdown for UI callers, but
+the saved plan dict now carries a small executable context:
+
+- `current_step_id`: the step currently selected as the next executable unit.
+- `next_action`: a dict with `action_name`, `step_id`, `description`,
+  `params_needed`, `risk_level`, and `validation`.
+- `allowed_actions`: action names mentioned across the structured plan,
+  including multiple actions found in a single recommended step.
+
+The runtime records these fields in the `runtime_plan_context_saved` trace
+payload and exposes the same summary as `RuntimeToolResult.metadata.plan_context`
+when a planning tool is called through `handle_user_goal`.
+
 ## Confirmation Flow
 
 Runtime tools are policy-checked before any callback is invoked.

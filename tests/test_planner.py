@@ -3,6 +3,28 @@ from agent.planner import format_chassis_plan, plan_chassis_task, suggest_chassi
 from agent.registry import ActionRegistry
 
 
+def test_plan_schema_includes_next_action_and_allowed_actions():
+    plan = plan_chassis_task(goal="prepare record data", condition_name="recording")
+    next_action = plan["next_action"]
+
+    assert plan["current_step_id"] == next_action["step_id"]
+    assert {
+        "action_name",
+        "step_id",
+        "description",
+        "params_needed",
+        "risk_level",
+        "validation",
+    }.issubset(next_action)
+    assert next_action["action_name"] == "prepare_test_scene"
+    assert "prepare_test_scene" in plan["allowed_actions"]
+    assert "prepare_recording_session" in plan["allowed_actions"]
+    assert "start_recording" in plan["allowed_actions"]
+    assert {"prepare_recording_session", "start_recording"}.issubset(
+        plan["steps"][1]["allowed_actions"]
+    )
+
+
 def test_plan_chassis_task_for_lane_change_roll():
     plan = plan_chassis_task(goal="单移线侧倾大，需要改善", condition_name="单移线")
 

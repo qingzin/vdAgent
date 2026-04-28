@@ -165,7 +165,9 @@ class NanobotRuntimeAdapter:
             action_name=name,
         )
         if status == "executed":
-            self._capture_plan_context(name, params)
+            plan_context_payload = self._capture_plan_context(name, params)
+            if plan_context_payload:
+                result_metadata["plan_context"] = plan_context_payload
             self._write_experience_seed(name, params, output, metadata)
         return RuntimeToolResult(
             tool_name=name,
@@ -254,7 +256,11 @@ class NanobotRuntimeAdapter:
         self.memory.record_session_message(
             "assistant",
             result.output or result.confirmation_summary or "",
-            metadata={"selected_tool": tool_name, "status": result.status},
+            metadata={
+                "selected_tool": tool_name,
+                "status": result.status,
+                "plan_context": result.metadata.get("plan_context", {}),
+            },
         )
         return RuntimeTurnResult(
             user_goal=user_goal,
@@ -290,9 +296,9 @@ class NanobotRuntimeAdapter:
         plan = self.recent_plan_context or {}
         return plan.get("steps", []) if isinstance(plan, dict) else []
 
-    def _capture_plan_context(self, name: str, params: Dict) -> None:
+    def _capture_plan_context(self, name: str, params: Dict) -> Optional[dict]:
         if name not in PLANNING_TOOL_NAMES:
-            return
+            return None
         try:
             if name == "plan_chassis_task":
                 self.recent_plan_context = plan_chassis_task(**params)
@@ -300,17 +306,29 @@ class NanobotRuntimeAdapter:
                 self.recent_plan_context = suggest_chassis_tuning(**params)
         except Exception:
             self.recent_plan_context = None
-            return
+            return None
+        payload = self._plan_context_payload(self.recent_plan_context)
         self.memory.record_runtime_event(
             "plan_context_saved",
             "Saved latest runtime plan context",
-            payload={
-                "plan_id": self.recent_plan_context.get("plan_id"),
-                "goal": self.recent_plan_context.get("goal"),
-                "condition_name": self.recent_plan_context.get("condition_name"),
-            },
+            payload=payload,
             action_name=name,
         )
+        return payload
+
+    @staticmethod
+    def _plan_context_payload(plan_context: Optional[Dict]) -> dict:
+        if not isinstance(plan_context, dict):
+            return {}
+        return {
+            "plan_id": plan_context.get("plan_id"),
+            "kind": plan_context.get("kind"),
+            "goal": plan_context.get("goal"),
+            "condition_name": plan_context.get("condition_name"),
+            "current_step_id": plan_context.get("current_step_id"),
+            "next_action": plan_context.get("next_action"),
+            "allowed_actions": plan_context.get("allowed_actions", []),
+        }
 
     def _write_experience_seed(self, name: str, params: Dict,
                                output: str, metadata: dict) -> None:
