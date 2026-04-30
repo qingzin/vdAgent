@@ -210,6 +210,38 @@ class AgentWorker(QObject):
             self.error.emit(str(e))
 
 
+class StreamingAgentWorker(QObject):
+    """在子线程中流式调用 LLM，逐 token 发送"""
+    finished = pyqtSignal(object)
+    chunk = pyqtSignal(str)
+    error = pyqtSignal(str)
+
+    def __init__(self, llm_client, messages, tools, system_prompt):
+        super().__init__()
+        self.llm_client = llm_client
+        self.messages = messages
+        self.tools = tools
+        self.system_prompt = system_prompt
+
+    def run(self):
+        try:
+            full_text = ""
+            for token in self.llm_client.chat_stream(
+                messages=self.messages,
+                tools=self.tools,
+                system=self.system_prompt,
+                temperature=0.3,
+            ):
+                full_text += token
+                self.chunk.emit(token)
+
+            # 对完整文本做 tool call 检测
+            response = self.llm_client._parse_response_from_text(full_text, self.tools)
+            self.finished.emit(response)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
 class AgentExecutor(QObject):
     """
     Agent 执行器
@@ -224,6 +256,7 @@ class AgentExecutor(QObject):
     confirm_request = pyqtSignal(str, dict, str)
     action_done = pyqtSignal(str)
     thinking = pyqtSignal(bool)
+    chunk_received = pyqtSignal(str)
 
     def __init__(self, registry, llm_client, max_history=MAX_HISTORY_MESSAGES,
                  memory_store=None, ctx=None):
@@ -291,10 +324,10 @@ class AgentExecutor(QObject):
             self.history = self.history[drop_count:]
 
     def _call_llm(self):
-        """在子线程中调用 LLM,注入当前系统上下文"""
+        """在子线程中流式调用 LLM,注入当前系统上下文"""
         self._is_busy = True
         self.thinking.emit(True)
-        self._busy_watchdog.start(30000)
+        self._busy_watchdog.start(60000)
 
         tools = self.registry.get_tools_schema()
         self._write_trace("llm_request", payload={"tool_count": len(tools)})
@@ -302,20 +335,24 @@ class AgentExecutor(QObject):
         context_text = self._build_full_context()
 
         self._worker_thread = QThread()
-        self._worker = AgentWorker(self.llm_client, list(self.history), tools,
-                                   system_prompt=context_text)
+        self._worker = StreamingAgentWorker(self.llm_client, list(self.history),
+                                            tools, system_prompt=context_text)
         self._worker.moveToThread(self._worker_thread)
 
         self._worker_thread.started.connect(self._worker.run)
+        self._worker.chunk.connect(self._on_stream_chunk)
         self._worker.finished.connect(self._on_llm_response)
         self._worker.error.connect(self._on_llm_error)
         self._worker.finished.connect(self._worker_thread.quit)
         self._worker.error.connect(self._worker_thread.quit)
-        # 确保 thread 和 worker 对象在线程结束后被清理
         self._worker_thread.finished.connect(self._worker.deleteLater)
         self._worker_thread.finished.connect(self._worker_thread.deleteLater)
 
         self._worker_thread.start()
+
+    def _on_stream_chunk(self, token: str):
+        """流式输出的 token 回调 — 转发给 UI"""
+        self.chunk_received.emit(token)
 
     def _build_full_context(self) -> str:
         """构建包含当前系统状态、知识库和近期经验的完整上下文。"""
