@@ -241,22 +241,34 @@ class AgentExecutor(QObject):
         self._auto_step_count = 0
         self._auto_step_max = 10
         self._multi_step_active = False
+        self._message_queue = []
         self._busy_watchdog = QTimer()
         self._busy_watchdog.setSingleShot(True)
         self._busy_watchdog.timeout.connect(self._on_busy_timeout)
 
     def process_user_input(self, user_message: str):
-        """处理用户输入的自然语言"""
+        """处理用户输入的自然语言，忙碌时排队"""
         if self._is_busy:
-            self.response_ready.emit("AI 正在处理上一条消息,请稍候...")
-            self._write_trace("user_input_rejected", user_message,
-                              status="busy")
+            self._message_queue.append(user_message)
+            self._write_trace("user_input_queued", user_message,
+                              status="busy", payload={"queue_len": len(self._message_queue)})
             return
         self._write_trace("user_input", user_message)
         self._auto_step_count = 0
         self._multi_step_active = True
         self._append_history({"role": "user", "content": user_message})
         self._call_llm()
+
+    def _drain_queue(self):
+        """处理消息队列中的下一条消息"""
+        if self._message_queue:
+            next_msg = self._message_queue.pop(0)
+            self._write_trace("user_input_dequeued", next_msg,
+                              payload={"remaining": len(self._message_queue)})
+            self._auto_step_count = 0
+            self._multi_step_active = True
+            self._append_history({"role": "user", "content": next_msg})
+            self._call_llm()
 
     def _append_history(self, message: dict):
         """追加一条消息到历史,并应用滑动窗口"""
@@ -397,6 +409,7 @@ class AgentExecutor(QObject):
             self._auto_step_count = 0
             self._multi_step_active = False
             self.response_ready.emit(text)
+            self._drain_queue()
 
     def _stop_busy_watchdog(self):
         self._busy_watchdog.stop()
@@ -411,6 +424,7 @@ class AgentExecutor(QObject):
         self._multi_step_active = False
         self._stop_multi_step()
         self.response_ready.emit("AI 响应超时，请重试。")
+        self._drain_queue()
 
     def _on_llm_error(self, error_msg):
         """处理 LLM 错误"""
@@ -420,6 +434,7 @@ class AgentExecutor(QObject):
         msg = f"AI 助手出错:{error_msg}"
         self._write_trace("llm_error", msg, status="error")
         self.response_ready.emit(msg)
+        self._drain_queue()
 
     def confirm_action(self):
         """用户确认执行操作"""
@@ -467,6 +482,7 @@ class AgentExecutor(QObject):
         })
 
         self.response_ready.emit("操作已取消。")
+        self._drain_queue()
 
     def clear_history(self):
         """清空对话历史"""
@@ -523,6 +539,7 @@ class AgentExecutor(QObject):
             self._auto_step_count = 0
             self._multi_step_active = False
             self.response_ready.emit(f"{result}\n\n(已达到最大执行步数 {self._auto_step_max}，自动停止)")
+            self._drain_queue()
             return
 
         self._append_history({

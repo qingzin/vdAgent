@@ -1,48 +1,10 @@
-"""
-场景设置相关 action
-
-- prepare_test_scene          切换工况/地图/起点并确认生效
-- get_current_scene           查询当前场景设置
-"""
+"""场景设置 action — 通过 SceneService 操作。"""
 
 from ._helpers import fuzzy_resolve
 
 
 def register(registry, ctx):
-
-    # -----------------------------------------------------------------------
-
-    def _find_map(ui, map_name):
-        """根据名称在 map_combo 里找对应索引"""
-        if not hasattr(ui, 'map_combo'):
-            return -1, None
-        for i in range(ui.map_combo.count()):
-            if ui.map_combo.itemText(i) == map_name:
-                return i, ui.map_combo.itemData(i)
-        # 模糊
-        names = [ui.map_combo.itemText(i) for i in range(ui.map_combo.count())]
-        resolved, _err = fuzzy_resolve(map_name, names)
-        if resolved is None:
-            return -1, None
-        for i in range(ui.map_combo.count()):
-            if ui.map_combo.itemText(i) == resolved:
-                return i, ui.map_combo.itemData(i)
-        return -1, None
-
-    def _find_point(ui, point_name):
-        if not hasattr(ui, 'start_point_combo'):
-            return -1
-        for i in range(ui.start_point_combo.count()):
-            if ui.start_point_combo.itemText(i) == point_name:
-                return i
-        names = [ui.start_point_combo.itemText(i) for i in range(ui.start_point_combo.count())]
-        resolved, _ = fuzzy_resolve(point_name, names)
-        if resolved is None:
-            return -1
-        for i in range(ui.start_point_combo.count()):
-            if ui.start_point_combo.itemText(i) == resolved:
-                return i
-        return -1
+    svc = ctx.service('scene')
 
     def prepare_test_scene(condition_name: str = None,
                            map_name: str = None,
@@ -52,37 +14,50 @@ def register(registry, ctx):
         msgs = []
 
         if condition_name is not None:
-            if not hasattr(ui, 'condition_combo'):
-                return "condition_combo 未就绪。"
-            names = [ui.condition_combo.itemText(i)
-                     for i in range(ui.condition_combo.count())]
-            resolved, err = fuzzy_resolve(condition_name, names)
-            if err:
-                return err + f" 可用工况: {names}"
-            ui.condition_combo.setCurrentText(resolved)
-            msgs.append(f"工况切换为: {resolved}")
+            resolved = svc.set_condition(condition_name)
+            if resolved is None:
+                names = [ui.condition_combo.itemText(i)
+                         for i in range(ui.condition_combo.count())]
+                r, err = fuzzy_resolve(condition_name, names)
+                if err:
+                    return err + f" 可用工况: {names}"
+                svc.set_condition(r)
+                msgs.append(f"工况切换为: {r}")
+            else:
+                msgs.append(f"工况切换为: {resolved}")
 
         if map_name is not None:
-            idx, _data = _find_map(ui, map_name)
-            if idx < 0:
-                return f"未找到地图: {map_name}"
-            ui.map_combo.setCurrentIndex(idx)
-            msgs.append(f"地图切换为: {ui.map_combo.currentText()}")
-            # 切换地图会触发 update_start_points, 此时起点已经是第一个
+            resolved = svc.set_map(map_name)
+            if resolved is None:
+                names = [ui.map_combo.itemText(i)
+                         for i in range(ui.map_combo.count())]
+                r, err = fuzzy_resolve(map_name, names)
+                if err:
+                    return err + f" 可用地图: {names}"
+                svc.set_map(r)
+                msgs.append(f"地图切换为: {svc.get_map()}")
+            else:
+                msgs.append(f"地图切换为: {resolved}")
 
         if start_point_name is not None:
-            idx = _find_point(ui, start_point_name)
-            if idx < 0:
-                return "; ".join(msgs) + f"; 未找到起点: {start_point_name}"
-            ui.start_point_combo.setCurrentIndex(idx)
-            msgs.append(f"起点切换为: {ui.start_point_combo.currentText()}")
+            resolved = svc.set_start_point(start_point_name)
+            if resolved is None:
+                names = [ui.start_point_combo.itemText(i)
+                         for i in range(ui.start_point_combo.count())]
+                r, err = fuzzy_resolve(start_point_name, names)
+                if err:
+                    return err + f" 可用起点: {names}"
+                svc.set_start_point(r)
+                msgs.append(f"起点切换为: {svc.get_start_point()}")
+            else:
+                msgs.append(f"起点切换为: {resolved}")
 
         if not msgs:
             return "请至少指定 condition_name、map_name 或 start_point_name 中的一项。"
 
         if confirm:
             try:
-                ui.confirm_scenario_settings()
+                svc.confirm_scene()
                 msgs.append("场景已确认并下发到平台")
             except Exception as e:
                 msgs.append(f"场景确认失败: {e}")
@@ -93,15 +68,14 @@ def register(registry, ctx):
 
     registry.register(
         name="prepare_test_scene",
-        description="准备试验场景。可统一设置工况、地图和起点,"
-                    "并默认自动确认生效、下发起点坐标和 cueing 配置。",
+        description="准备试验场景。可统一设置工况、地图和起点,默认自动确认生效。",
         params_schema={
             "type": "object",
             "properties": {
-                "condition_name":    {"type": "string", "description": "工况名称"},
-                "map_name":          {"type": "string", "description": "地图名称"},
-                "start_point_name":  {"type": "string", "description": "起点名称"},
-                "confirm":           {"type": "boolean", "description": "是否立即确认生效,默认 true"},
+                "condition_name": {"type": "string"},
+                "map_name": {"type": "string"},
+                "start_point_name": {"type": "string"},
+                "confirm": {"type": "boolean", "description": "是否立即确认生效,默认 true"},
             },
             "required": []
         },
@@ -111,17 +85,14 @@ def register(registry, ctx):
         exposed=True,
     )
 
-    # -----------------------------------------------------------------------
-
     def get_current_scene() -> str:
-        ui = ctx.ui
         parts = []
-        if hasattr(ui, 'map_combo'):
-            parts.append(f"地图: {ui.map_combo.currentText()}")
-        if hasattr(ui, 'start_point_combo'):
-            parts.append(f"起点: {ui.start_point_combo.currentText()}")
-        if hasattr(ui, 'condition_combo'):
-            parts.append(f"工况: {ui.condition_combo.currentText()}")
+        m = svc.get_map()
+        if m: parts.append(f"地图: {m}")
+        sp = svc.get_start_point()
+        if sp: parts.append(f"起点: {sp}")
+        c = svc.get_condition()
+        if c: parts.append(f"工况: {c}")
         return "; ".join(parts) if parts else "场景信息不可用。"
 
     registry.register(
@@ -135,52 +106,33 @@ def register(registry, ctx):
         side_effects=False,
     )
 
-    # -----------------------------------------------------------------------
-
     def set_road_segment(segment_name: str = None, query: bool = False) -> str:
-        """设置或查询当前路段选择 (自动记录触发区域)"""
         ui = ctx.ui
         if query or segment_name is None:
-            if not hasattr(ui, 'road_segment_combo'):
-                return "road_segment_combo 未就绪。"
-            current = ui.road_segment_combo.currentText()
-            names = [ui.road_segment_combo.itemText(i) for i in range(ui.road_segment_combo.count())]
+            current = svc.get_road_segment()
+            names = [ui.road_segment_combo.itemText(i)
+                     for i in range(ui.road_segment_combo.count())]
             return f"当前路段: {current}; 可用路段: {names}"
 
-        if not hasattr(ui, 'road_segment_combo'):
-            return "road_segment_combo 未就绪。"
-
-        # 查找路段
-        idx = -1
-        for i in range(ui.road_segment_combo.count()):
-            if ui.road_segment_combo.itemText(i) == segment_name:
-                idx = i
-                break
-        if idx < 0:
-            names = [ui.road_segment_combo.itemText(i) for i in range(ui.road_segment_combo.count())]
-            resolved, _err = fuzzy_resolve(segment_name, names)
-            if resolved is None:
+        resolved = svc.set_road_segment(segment_name)
+        if resolved is None:
+            names = [ui.road_segment_combo.itemText(i)
+                     for i in range(ui.road_segment_combo.count())]
+            r, err = fuzzy_resolve(segment_name, names)
+            if err:
                 return f"未找到路段: {segment_name}, 可用: {names}"
-            for i in range(ui.road_segment_combo.count()):
-                if ui.road_segment_combo.itemText(i) == resolved:
-                    idx = i
-                    break
-        if idx < 0:
-            return f"未找到路段: {segment_name}"
-
-        ui.road_segment_combo.setCurrentIndex(idx)
-        if hasattr(ui, 'update_coordinates'):
-            ui.update_coordinates(idx)
-        return f"已切换路段: {ui.road_segment_combo.currentText()},自动记录坐标已更新。"
+            svc.set_road_segment(r)
+            return f"已切换路段: {r},自动记录坐标已更新。"
+        return f"已切换路段: {resolved},自动记录坐标已更新。"
 
     registry.register(
         name="set_road_segment",
-        description="设置或查询自动记录路段。切换路段会同步更新自动记录的起终点坐标和触发速度。",
+        description="设置或查询自动记录路段。",
         params_schema={
             "type": "object",
             "properties": {
-                "segment_name": {"type": "string", "description": "路段名称, 留空则查询"},
-                "query": {"type": "boolean", "description": "设为 true 查询当前路段和可用列表, 默认 false"},
+                "segment_name": {"type": "string"},
+                "query": {"type": "boolean"},
             },
             "required": []
         },

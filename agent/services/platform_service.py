@@ -1,41 +1,40 @@
 """
 运动平台控制 Service
 
-职责: 封装"发送平台控制指令"这一业务能力。
-不涉及 UI, 不涉及 carsim。只发 UDP。
+封装 UI 层的一键启停和平台偏置操作。
+底层 UDP 通信由 SimulatorUI 内部处理。
 """
-
-import struct
-from PyQt5.QtNetwork import QHostAddress
 
 
 class PlatformService:
-    COMMAND_NAMES = {
-        0: "Off(关闭)", 1: "Disengage(脱开)", 2: "Consent(同意)",
-        3: "ReadyForTraining(准备训练)", 4: "Engage(接合)",
-        5: "Hold(保持)", 6: "Reset(重置)",
-    }
+    def __init__(self, ctx):
+        self._ctx = ctx
 
-    def __init__(self, udp_socket, target_host="10.10.20.221", target_port=3366):
-        self.udp_socket = udp_socket
-        self.target_host = target_host
-        self.target_port = target_port
+    @property
+    def _ui(self):
+        return self._ctx.ui
 
-    def send_command(self, command: int) -> dict:
-        """
-        发送平台控制指令。
+    def one_click_start(self) -> str:
+        self._ui.one_click_start()
+        return "已触发平台一键启动流程 (Reset → Consent → Engage)。"
 
-        Returns:
-            {"command": int, "name": str}
+    def one_click_stop(self) -> str:
+        self._ui.one_click_stop()
+        return "已触发平台一键关闭流程 (Disengage → Off)。"
 
-        Raises:
-            ValueError: 指令越界
-        """
-        if command not in self.COMMAND_NAMES:
-            raise ValueError(f"无效指令 {command}, 有效范围 0-6")
+    def set_offset(self, x=None, y=None, z=None) -> str:
+        ui = self._ui
+        cur_x = float(ui.offset_x.text()) if hasattr(ui, 'offset_x') and x is None else 0.0
+        cur_y = float(ui.offset_y.text()) if hasattr(ui, 'offset_y') and y is None else 0.0
+        cur_z = float(ui.offset_z.text()) if hasattr(ui, 'offset_z') and z is None else 0.0
 
-        data = struct.pack('i', command)
-        self.udp_socket.writeDatagram(
-            data, QHostAddress(self.target_host), self.target_port
-        )
-        return {"command": command, "name": self.COMMAND_NAMES[command]}
+        nx = cur_x if x is None else float(x)
+        ny = cur_y if y is None else float(y)
+        nz = cur_z if z is None else float(z)
+
+        if hasattr(ui, 'offset_x'): ui.offset_x.setText(str(nx))
+        if hasattr(ui, 'offset_y'): ui.offset_y.setText(str(ny))
+        if hasattr(ui, 'offset_z'): ui.offset_z.setText(str(nz))
+
+        ui.sendDataPlatformOffset2(nx, ny, nz)
+        return f"已设置平台位置偏置: X={nx}, Y={ny}, Z={nz} (米)"

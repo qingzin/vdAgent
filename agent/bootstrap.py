@@ -18,6 +18,16 @@ from agent.executor import AgentExecutor
 from agent.chat_widget import ChatWidget
 from agent.bridge import register_actions
 from agent.context import AgentContext
+from agent.services.tuning_service import TuningService
+from agent.services.simulation_service import SimulationService
+from agent.services.recording_service import RecordingService
+from agent.services.haptic_service import HapticService
+from agent.services.platform_service import PlatformService
+from agent.services.scene_service import SceneService
+from agent.services.visual_service import VisualService
+from agent.services.monitoring_service import MonitoringService
+from agent.services.metadata_service import MetadataService
+from agent.services.analysis_service import AnalysisService
 
 
 def attach_agent(main_window, llm_url: str = "http://127.0.0.1:8080"):
@@ -35,15 +45,25 @@ def attach_agent(main_window, llm_url: str = "http://127.0.0.1:8080"):
     # 1. 构造 context, 自动定位 main.py 模块
     ctx = AgentContext(ui=main_window)
 
-    # 2. 创建核心组件
+    # 2. 注册 service 层
+    ctx.register_service('tuning', TuningService(ctx))
+    ctx.register_service('simulation', SimulationService(ctx))
+    ctx.register_service('recording', RecordingService(ctx))
+    ctx.register_service('haptic', HapticService(ctx))
+    ctx.register_service('platform', PlatformService(ctx))
+    ctx.register_service('scene', SceneService(ctx))
+    ctx.register_service('visual', VisualService(ctx))
+    ctx.register_service('monitoring', MonitoringService(ctx))
+    ctx.register_service('metadata', MetadataService(ctx))
+    ctx.register_service('analysis', AnalysisService(ctx))
+
+    # 3. 创建核心组件
     registry = ActionRegistry()
     llm_client = LLMClient(base_url=llm_url)
     executor = AgentExecutor(registry, llm_client, ctx=ctx)
     ctx.llm_client = llm_client  # 供 planning/knowledge action 调用 LLM
 
-    # 3. 注册所有 action
-    #    register_actions 内部会按需从 ctx 取东西,
-    #    或构造 service 注册到 ctx.services
+    # 4. 注册所有 action
     register_actions(registry, ctx)
     print(f"[Agent] 已注册 {len(registry.get_action_names())} 个操作:")
     for name in registry.get_action_names():

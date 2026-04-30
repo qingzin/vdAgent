@@ -1,23 +1,14 @@
-"""
-数据记录相关 action
-
-- start_recording         开始记录 IMU/CarSim/MOOG 数据
-- stop_recording          结束记录
-- prepare_recording_session   配置记录会话开关(disusx / video / par / auto_record)
-- get_recording_status    查询当前记录状态
-"""
+"""数据记录相关 action — 通过 RecordingService 操作。"""
 
 
 def register(registry, ctx):
+    svc = ctx.service('recording')
 
-    # ---------- 开始记录 ----------
     def start_recording() -> str:
-        ui = ctx.ui
-        if ctx.is_recording():
+        if svc.is_recording():
             return "当前已经在记录中,无需重复开始。"
         try:
-            ui.start_record()
-            return "已开始记录 IMU / CarSim / MOOG 数据。"
+            return svc.start()
         except Exception as e:
             return f"开始记录失败: {e}"
 
@@ -31,21 +22,17 @@ def register(registry, ctx):
         exposed=True,
     )
 
-    # ---------- 结束记录 ----------
     def stop_recording() -> str:
-        ui = ctx.ui
-        if not ctx.is_recording():
+        if not svc.is_recording():
             return "当前没有在记录,无需结束。"
         try:
-            ui.finish_record()
-            return "已结束记录。稍后可能弹出评价信息对话框,请在 GUI 中填写。"
+            return svc.stop()
         except Exception as e:
             return f"结束记录失败: {e}"
 
     registry.register(
         name="stop_recording",
-        description="结束当前记录,保存数据到 CSV。"
-                    "非 auto_record 模式下会弹出评价信息对话框。",
+        description="结束当前记录,保存数据到 CSV。",
         params_schema={"type": "object", "properties": {}, "required": []},
         callback=stop_recording,
         category="recording",
@@ -53,49 +40,30 @@ def register(registry, ctx):
         exposed=True,
     )
 
-    # ---------- 记录选项 ----------
     def prepare_recording_session(record_disusx=None, video_recording=None,
                                   par_save=None, auto_record=None) -> str:
-        ui = ctx.ui
-        changes = []
-
-        if record_disusx is not None:
-            ui.record_disusx = bool(record_disusx)
-            changes.append(f"Disus_C 电控记录={bool(record_disusx)}")
-
-        if video_recording is not None:
-            try:
-                ui.video_recording(bool(video_recording))
-                changes.append(f"视频录制={bool(video_recording)}")
-            except Exception as e:
-                changes.append(f"视频录制设置失败: {e}")
-
-        if par_save is not None:
-            ui.is_par_save = bool(par_save)
-            changes.append(f"保存 par 文件={bool(par_save)}")
-
-        if auto_record is not None:
-            # auto_record 是 int, 0 关闭非 0 开启。此处统一为 0 或 1。
-            val = 1 if auto_record else 0
-            ui.auto_record = val
-            changes.append(f"自动记录={'开启' if val else '关闭'}")
-
+        changes = svc.set_options(
+            record_disusx=record_disusx,
+            video_recording=video_recording,
+            par_save=par_save,
+            auto_record=auto_record,
+        )
         if not changes:
             return ("未指定任何选项。可用参数: record_disusx, video_recording, "
                     "par_save, auto_record (均为布尔值)")
-        return "已更新记录选项: " + ", ".join(changes)
+        desc = ", ".join(f"{k}={v}" for k, v in changes.items())
+        return "已更新记录选项: " + desc
 
     registry.register(
         name="prepare_recording_session",
-        description="准备一次记录会话。统一配置电控记录、视频录制、"
-                    ".par 参数文件保存和自动记录模式。未指定的参数保持不变。",
+        description="准备一次记录会话。统一配置电控记录、视频录制等选项。",
         params_schema={
             "type": "object",
             "properties": {
-                "record_disusx":    {"type": "boolean", "description": "Disus_C 电控记录"},
-                "video_recording":  {"type": "boolean", "description": "视频录制"},
-                "par_save":         {"type": "boolean", "description": ".par 文件保存"},
-                "auto_record":      {"type": "boolean", "description": "自动记录"},
+                "record_disusx": {"type": "boolean"},
+                "video_recording": {"type": "boolean"},
+                "par_save": {"type": "boolean"},
+                "auto_record": {"type": "boolean"},
             },
             "required": []
         },
@@ -105,26 +73,12 @@ def register(registry, ctx):
         exposed=True,
     )
 
-    # ---------- 查询记录状态 ----------
     def get_recording_status() -> str:
-        ui = ctx.ui
-        is_rec = ctx.is_recording()
-        parts = [f"当前记录状态: {'记录中' if is_rec else '未记录'}"]
-        for label, attr in [
-            ("Disus_C 电控记录", 'record_disusx'),
-            ("视频录制",         'is_video_recording'),
-            (".par 文件保存",    'is_par_save'),
-        ]:
-            val = getattr(ui, attr, None)
-            if val is not None:
-                parts.append(f"{label}: {'开' if val else '关'}")
-        ar = getattr(ui, 'auto_record', 0)
-        parts.append(f"自动记录: {'开启' if ar else '关闭'}")
-        return "; ".join(parts)
+        return svc.get_status()
 
     registry.register(
         name="get_recording_status",
-        description="查询当前数据记录状态(是否正在记录、各类开关的启停情况)。",
+        description="查询当前数据记录状态。",
         params_schema={"type": "object", "properties": {}, "required": []},
         callback=get_recording_status,
         category="query",
