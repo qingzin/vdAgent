@@ -1,84 +1,102 @@
+"""Tests for LLM-driven planner prompt builders and action registration."""
+
+from unittest.mock import patch, MagicMock
+
+from agent.planner import (
+    PLAN_SYSTEM_PROMPT,
+    build_chassis_plan_prompt,
+    build_tuning_suggestion_prompt,
+    build_planning_prompt,
+)
 from agent.actions import knowledge_actions, planning_actions
-from agent.planner import format_chassis_plan, plan_chassis_task, suggest_chassis_tuning
 from agent.registry import ActionRegistry
 
 
-def test_plan_chassis_task_for_lane_change_roll():
-    plan = plan_chassis_task(goal="单移线侧倾大，需要改善", condition_name="单移线")
+# -- prompt builders ---------------------------------------------------
 
-    assert plan["kind"] == "chassis_task_plan"
-    assert plan["plan_id"].startswith("plan_")
-    assert plan["goal"]
-    assert plan["condition_name"]
-    assert plan["steps"]
-    assert plan["validation_metrics"]
-    assert plan["required_confirmation"]
-    assert {
-        "action_name",
-        "description",
-        "params_needed",
-        "risk_level",
-        "preconditions",
-        "validation",
-    }.issubset(plan["steps"][0])
-    assert any("稳定杆" in item for item in plan["parameter_direction"])
-    assert any("侧倾角" in item for item in plan["validation_metrics"])
+def test_build_planning_prompt_includes_all_sections():
+    prompt = build_planning_prompt(
+        goal="单移线侧倾大，需要改善",
+        complaint="侧倾明显",
+        condition_name="单移线",
+        current_state="- 当前车型: CarA\n- 前稳定杆: BAR_F1",
+        knowledge="【稳定杆调校基本原则】分类:chassis_tuning\n稳定杆通过扭杆的扭转刚度...",
+        experiences="- set_antiroll_bar: 已选择后轮稳定杆",
+    )
+
+    assert "单移线侧倾大" in prompt
+    assert "侧倾明显" in prompt
+    assert "单移线" in prompt
+    assert "CarA" in prompt
+    assert "稳定杆调校基本原则" in prompt
+    assert "set_antiroll_bar" in prompt
 
 
-def test_suggest_chassis_tuning_for_steering_center_heavy():
-    suggestion = suggest_chassis_tuning(
+def test_build_chassis_plan_prompt():
+    prompt = build_chassis_plan_prompt(
+        goal="侧倾大",
+        current_state="- 前稳定杆: BAR_F1",
+    )
+    assert "侧倾大" in prompt
+    assert "BAR_F1" in prompt
+
+
+def test_build_tuning_suggestion_prompt():
+    prompt = build_tuning_suggestion_prompt(
         complaint="方向盘中心区重",
-        objective="减轻中心区手感",
-        condition_name="中心区",
+        current_state="- 摩擦增益=2",
     )
-
-    assert suggestion["kind"] == "chassis_tuning_suggestion"
-    assert any("friction" in item or "overall" in item for item in suggestion["parameter_direction"])
-    assert any("方向盘" in item for item in suggestion["validation_metrics"])
+    assert "方向盘中心区重" in prompt
+    assert "摩擦增益=2" in prompt
 
 
-def test_format_chassis_plan_returns_readable_markdown():
-    plan = plan_chassis_task(goal="单移线侧倾大，需要改善", condition_name="单移线")
-
-    text = format_chassis_plan(plan)
-
-    assert text.startswith("## 底盘任务规划")
-    assert "### 建议步骤" in text
-    assert "1. " in text
-    assert "{'" not in text
+def test_plan_system_prompt_is_chinese():
+    assert "底盘调校" in PLAN_SYSTEM_PROMPT
+    assert "诊断分析" in PLAN_SYSTEM_PROMPT
+    assert "建议步骤" in PLAN_SYSTEM_PROMPT
 
 
-def test_format_chassis_plan_includes_recent_experience_reference():
-    plan = plan_chassis_task(goal="单移线侧倾大，需要改善", condition_name="单移线")
-    plan["recent_experiences"] = [{
-        "action_name": "set_antiroll_bar",
-        "condition_name": "单移线",
-        "result": "已选择后轮稳定杆: demo_bar",
-    }]
+# -- action registration (without LLM) ---------------------------------
 
-    text = format_chassis_plan(plan)
-
-    assert "### 近期经验参考" in text
-    assert "set_antiroll_bar" in text
-    assert "demo_bar" in text
+class FakeContext:
+    llm_client = None  # no LLM, actions should return error gracefully
 
 
-def test_planning_and_knowledge_actions_return_readable_text():
+def test_planning_action_returns_error_without_llm():
     registry = ActionRegistry()
-    planning_actions.register(registry, ctx=None)
-    knowledge_actions.register(registry, ctx=None)
+    ctx = FakeContext()
+    planning_actions.register(registry, ctx)
 
-    plan_text = registry.execute(
+    result = registry.execute(
         "plan_chassis_task",
-        {"goal": "单移线侧倾大，需要改善", "condition_name": "单移线"},
+        {"goal": "单移线侧倾大"},
     )
-    suggestion_text = registry.execute(
-        "suggest_chassis_tuning",
-        {"complaint": "方向盘中心区重", "condition_name": "中心区"},
-    )
+    assert "未就绪" in result
 
-    assert plan_text.startswith("## 底盘任务规划")
-    assert suggestion_text.startswith("## 底盘调校建议")
-    assert "{'" not in plan_text
-    assert "{'" not in suggestion_text
-    assert registry.get_metadata("plan_chassis_task")["side_effects"] is False
+
+def test_knowledge_action_returns_error_without_llm():
+    registry = ActionRegistry()
+    ctx = FakeContext()
+    knowledge_actions.register(registry, ctx)
+
+    result = registry.execute(
+        "suggest_chassis_tuning",
+        {"complaint": "方向盘重"},
+    )
+    assert "未就绪" in result
+
+
+def test_planning_action_metadata():
+    registry = ActionRegistry()
+    planning_actions.register(registry, None)
+    meta = registry.get_metadata("plan_chassis_task")
+    assert meta["side_effects"] is False
+    assert meta["risk_level"] == "low"
+
+
+def test_knowledge_action_metadata():
+    registry = ActionRegistry()
+    knowledge_actions.register(registry, None)
+    meta = registry.get_metadata("suggest_chassis_tuning")
+    assert meta["side_effects"] is False
+    assert meta["risk_level"] == "low"

@@ -55,7 +55,6 @@ except ImportError:  # pragma: no cover - used by non-GUI tests.
 
 from agent.memory.models import EngineeringExperienceSeed, ProcessTrace
 from agent.memory.store import AgentMemoryStore, NullAgentMemoryStore
-from agent.planner import plan_chassis_task, suggest_chassis_tuning
 from agent.knowledge.store import KnowledgeStore
 
 
@@ -277,13 +276,30 @@ class AgentExecutor(QObject):
         self._worker_thread.start()
 
     def _build_full_context(self) -> str:
-        """构建包含当前系统状态和知识库引用的完整上下文。"""
+        """构建包含当前系统状态、知识库和近期经验的完整上下文。"""
         snapshot = _build_context_snapshot(self._get_ui())
-        # 附加最近经验
         experiences = self._format_recent_experiences()
         if experiences:
             snapshot += "\n\n近期操作经验:\n" + experiences
-        return SYSTEM_PROMPT_WITH_CONTEXT.format(context=snapshot)
+        knowledge = self._format_knowledge_context()
+        if knowledge:
+            snapshot += "\n\n相关领域知识:\n" + knowledge
+        return SYSTEM_PROMPT_WITH_CONTEXT.replace("{context}", snapshot)
+
+    def _format_knowledge_context(self) -> str:
+        """从知识库检索与当前上下文相关的条目。"""
+        try:
+            store = KnowledgeStore()
+            entries = store.search(limit=4)
+            if not entries:
+                return ""
+            lines = []
+            for e in entries:
+                title = e["meta"].get("title", e["filename"])
+                lines.append(f"- {title}: {e['summary'][:120]}")
+            return "\n".join(lines) if lines else ""
+        except Exception:
+            return ""
 
     def _get_ui(self):
         """获取 UI 引用。"""
@@ -459,32 +475,20 @@ class AgentExecutor(QObject):
         return risk_level in {"medium", "high"} or side_effects is not False
 
     def _action_matches_recent_plan(self, action_name: str) -> bool:
-        plan = self.recent_plan_context or {}
-        for step in plan.get("steps", []):
-            if step.get("action_name") == action_name:
-                return True
-        return False
+        return bool(self.recent_plan_context)
 
     def _capture_plan_context(self, action_name: str, params: dict):
         if action_name not in {"plan_chassis_task", "suggest_chassis_tuning"}:
             return
-        try:
-            if action_name == "plan_chassis_task":
-                plan = plan_chassis_task(**params)
-            else:
-                plan = suggest_chassis_tuning(**params)
-        except Exception:
-            return
-        self.recent_plan_context = plan
+        self.recent_plan_context = {
+            "action": action_name,
+            "goal": params.get("goal") or params.get("complaint"),
+            "condition_name": params.get("condition_name"),
+        }
         self._write_trace(
             "plan_context_saved",
-            "Saved latest structured plan context",
-            payload={
-                "plan_id": plan.get("plan_id"),
-                "goal": plan.get("goal"),
-                "condition_name": plan.get("condition_name"),
-                "steps": plan.get("steps", []),
-            },
+            "Saved LLM-generated plan context",
+            payload=self.recent_plan_context,
             action_name=action_name,
         )
 

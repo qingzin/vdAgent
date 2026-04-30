@@ -3,7 +3,7 @@
 import sys
 import tempfile
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -16,11 +16,24 @@ from agent.registry import ActionRegistry
 
 
 class FakeLLMResponse:
-    def __init__(self, tool_name=None, tool_params=None):
+    def __init__(self, tool_name=None, tool_params=None, text=None):
         self.has_tool_call = tool_name is not None
         self.tool_name = tool_name
         self.tool_params = tool_params or {}
-        self.text = None
+        self.text = text
+
+
+class FakeLLMClient:
+    """Returns canned text for planning/knowledge actions."""
+
+    def chat(self, messages, system=None, tools=None, temperature=0.3):
+        return FakeLLMResponse(text="## CHASSIS PLAN\n\n- goal: test\n\n### steps\n1. test")
+
+
+class FakeCtx:
+    def __init__(self):
+        self.llm_client = FakeLLMClient()
+        self.ui = None
 
 
 def _capture(signal):
@@ -31,7 +44,7 @@ def _capture(signal):
 
 def smoke_auto_execute_planning_action():
     registry = ActionRegistry()
-    planning_actions.register(registry, ctx=None)
+    planning_actions.register(registry, ctx=FakeCtx())
     with tempfile.TemporaryDirectory() as tmp_dir:
         executor = AgentExecutor(
             registry,
@@ -48,12 +61,12 @@ def smoke_auto_execute_planning_action():
 
         assert executor._pending_action is None
         assert confirmations == []
-        assert responses and responses[-1][0].startswith("## 底盘任务规划")
+        assert responses and responses[-1][0].startswith("## CHASSIS PLAN")
 
 
 def smoke_auto_execute_knowledge_action():
     registry = ActionRegistry()
-    knowledge_actions.register(registry, ctx=None)
+    knowledge_actions.register(registry, ctx=FakeCtx())
     with tempfile.TemporaryDirectory() as tmp_dir:
         executor = AgentExecutor(
             registry,
@@ -70,7 +83,7 @@ def smoke_auto_execute_knowledge_action():
 
         assert executor._pending_action is None
         assert confirmations == []
-        assert responses and responses[-1][0].startswith("## 底盘调校建议")
+        assert responses and responses[-1][0].startswith("## CHASSIS PLAN")
 
 
 def smoke_planning_with_side_effects_requires_confirmation():
@@ -101,35 +114,14 @@ def smoke_memory_fallback():
     executor._write_trace("smoke", "memory disabled")
 
 
-def smoke_readable_action_output():
+def smoke_planning_no_llm_graceful():
+    """Planning action returns graceful error when LLM is unavailable."""
     registry = ActionRegistry()
-    planning_actions.register(registry, ctx=None)
-    knowledge_actions.register(registry, ctx=None)
-
-    plan = registry.execute("plan_chassis_task", {"goal": "单移线侧倾大"})
-    suggestion = registry.execute(
-        "suggest_chassis_tuning",
-        {"complaint": "方向盘中心区重"},
-    )
-
-    assert plan.startswith("## 底盘任务规划")
-    assert suggestion.startswith("## 底盘调校建议")
-    assert "{'" not in plan
-    assert "{'" not in suggestion
-
-
-def smoke_recent_experience_recall():
-    from agent.planner import format_chassis_plan, plan_chassis_task
-
-    plan = plan_chassis_task("单移线侧倾大", condition_name="单移线")
-    plan["recent_experiences"] = [{
-        "action_name": "set_antiroll_bar",
-        "condition_name": "单移线",
-        "result": "已选择后轮稳定杆: demo_bar",
-    }]
-    text = format_chassis_plan(plan)
-    assert "### 近期经验参考" in text
-    assert "demo_bar" in text
+    planning_actions.register(registry, ctx=FakeCtx())
+    registry2 = ActionRegistry()
+    planning_actions.register(registry2, ctx=None)
+    result = registry2.execute("plan_chassis_task", {"goal": "test"})
+    assert "LLM" in result
 
 
 if __name__ == "__main__":
@@ -137,6 +129,5 @@ if __name__ == "__main__":
     smoke_auto_execute_knowledge_action()
     smoke_planning_with_side_effects_requires_confirmation()
     smoke_memory_fallback()
-    smoke_readable_action_output()
-    smoke_recent_experience_recall()
+    smoke_planning_no_llm_graceful()
     print("smoke_agent: ok")

@@ -1,36 +1,71 @@
 """
 知识库与调校建议 action
 
-- suggest_chassis_tuning   根据主观抱怨和目标输出底盘/触感调校建议
+- suggest_chassis_tuning   LLM 驱动的底盘/触感调校建议
 - search_knowledge         检索领域知识库
 - save_knowledge           保存新的领域知识条目
 """
 
-from agent.planner import format_chassis_plan, suggest_chassis_tuning
+from agent.planner import PLAN_SYSTEM_PROMPT, build_tuning_suggestion_prompt
 from agent.knowledge.store import KnowledgeStore
 from ._helpers import relevant_experience_seeds
-
-
-def _suggest_chassis_tuning_text(**kwargs) -> str:
-    result = suggest_chassis_tuning(**kwargs)
-    result["recent_experiences"] = relevant_experience_seeds(
-        condition_name=kwargs.get("condition_name"),
-        keyword=(
-            None if kwargs.get("condition_name")
-            else kwargs.get("complaint") or kwargs.get("objective")
-        ),
-    )
-    # 附加知识库检索
-    kw = kwargs.get("complaint") or kwargs.get("objective") or ""
-    result["knowledge_refs"] = KnowledgeStore().search(keyword=kw, limit=3)
-    return format_chassis_plan(result)
+from .planning_actions import _get_current_state_snapshot
 
 
 def register(registry, ctx):
+
+    # ---------- LLM 驱动的调校建议 ----------
+    def suggest_chassis_tuning(complaint: str, objective: str = None,
+                               condition_name: str = None) -> str:
+        """LLM 驱动的底盘调校建议。"""
+        llm = getattr(ctx, 'llm_client', None) if ctx is not None else None
+        if llm is None:
+            return "LLM 客户端未就绪，无法生成建议。请检查 llama-server 连接。"
+        ui = ctx.ui
+
+        current_state = _get_current_state_snapshot(ui)
+        knowledge = KnowledgeStore().search_for_context(
+            keyword=complaint or objective or "",
+            limit=4,
+        )
+        experiences_list = relevant_experience_seeds(
+            condition_name=condition_name,
+            keyword=complaint or objective,
+            limit=3,
+        )
+        exp_text = ""
+        if experiences_list:
+            exp_lines = []
+            for e in experiences_list:
+                a = e.get("action_name", "?")
+                r = str(e.get("result", ""))[:100]
+                exp_lines.append(f"- {a}: {r}")
+            exp_text = "\n".join(exp_lines)
+
+        prompt = build_tuning_suggestion_prompt(
+            complaint=complaint,
+            objective=objective,
+            condition_name=condition_name,
+            current_state=current_state,
+            knowledge=knowledge,
+            experiences=exp_text,
+        )
+
+        try:
+            response = llm.chat(
+                messages=[{"role": "user", "content": prompt}],
+                system=PLAN_SYSTEM_PROMPT,
+                temperature=0.3,
+            )
+            return response.text or "(LLM 返回空响应)"
+        except Exception as e:
+            return f"LLM 建议调用失败: {e}"
+
     registry.register(
         name="suggest_chassis_tuning",
         description=(
-            "根据主观抱怨和目标输出底盘/触感调校建议。只给建议和验证指标，"
+            "根据主观抱怨和目标输出底盘/触感调校建议。调用此工具会触发一次专门的"
+            "LLM 推理来分析当前配置、知识库和历史经验，只给建议和验证指标，"
             "不会直接修改车辆、硬件或仿真参数。"
         ),
         params_schema={
@@ -42,7 +77,7 @@ def register(registry, ctx):
             },
             "required": ["complaint"],
         },
-        callback=_suggest_chassis_tuning_text,
+        callback=suggest_chassis_tuning,
         category="knowledge",
         risk_level="low",
         exposed=True,

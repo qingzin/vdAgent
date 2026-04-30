@@ -2,7 +2,6 @@ from unittest.mock import patch
 
 from agent.executor import AgentExecutor
 from agent.memory.store import AgentMemoryStore
-from agent.planner import plan_chassis_task
 from agent.registry import ActionRegistry
 
 
@@ -249,10 +248,11 @@ def test_matched_plan_action_still_requires_confirmation_without_warning(tmp_pat
         llm_client=None,
         memory_store=AgentMemoryStore(base_dir=str(tmp_path)),
     )
-    executor.recent_plan_context = plan_chassis_task(
-        goal="lane change roll improvement",
-        condition_name="lane change",
-    )
+    executor.recent_plan_context = {
+        "action": "plan_chassis_task",
+        "goal": "lane change roll improvement",
+        "condition_name": "lane change",
+    }
     summaries = []
     executor.confirm_request.connect(
         lambda name, params, summary: summaries.append(summary)
