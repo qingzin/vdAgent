@@ -38,7 +38,7 @@ def attach_agent(main_window, llm_url: str = "http://127.0.0.1:8080"):
     # 2. 创建核心组件
     registry = ActionRegistry()
     llm_client = LLMClient(base_url=llm_url)
-    executor = AgentExecutor(registry, llm_client)
+    executor = AgentExecutor(registry, llm_client, ctx=ctx)
 
     # 3. 注册所有 action
     #    register_actions 内部会按需从 ctx 取东西,

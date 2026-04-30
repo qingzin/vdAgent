@@ -134,3 +134,60 @@ def register(registry, ctx):
         exposed=True,
         side_effects=False,
     )
+
+    # -----------------------------------------------------------------------
+
+    def set_road_segment(segment_name: str = None, query: bool = False) -> str:
+        """设置或查询当前路段选择 (自动记录触发区域)"""
+        ui = ctx.ui
+        if query or segment_name is None:
+            if not hasattr(ui, 'road_segment_combo'):
+                return "road_segment_combo 未就绪。"
+            current = ui.road_segment_combo.currentText()
+            names = [ui.road_segment_combo.itemText(i) for i in range(ui.road_segment_combo.count())]
+            return f"当前路段: {current}; 可用路段: {names}"
+
+        if not hasattr(ui, 'road_segment_combo'):
+            return "road_segment_combo 未就绪。"
+
+        # 查找路段
+        idx = -1
+        for i in range(ui.road_segment_combo.count()):
+            if ui.road_segment_combo.itemText(i) == segment_name:
+                idx = i
+                break
+        if idx < 0:
+            # 模糊匹配
+            names = [ui.road_segment_combo.itemText(i) for i in range(ui.road_segment_combo.count())]
+            resolved, _err = fuzzy_resolve(segment_name, names)
+            if resolved is None:
+                return f"未找到路段: {segment_name}, 可用: {names}"
+            for i in range(ui.road_segment_combo.count()):
+                if ui.road_segment_combo.itemText(i) == resolved:
+                    idx = i
+                    break
+        if idx < 0:
+            names = [ui.road_segment_combo.itemText(i) for i in range(ui.road_segment_combo.count())]
+            return f"未找到路段: {segment_name}, 可用: {names}"
+
+        ui.road_segment_combo.setCurrentIndex(idx)
+        if hasattr(ui, 'update_coordinates'):
+            ui.update_coordinates(idx)
+        return f"已切换路段: {ui.road_segment_combo.currentText()},自动记录坐标已更新。"
+
+    registry.register(
+        name="set_road_segment",
+        description="设置或查询自动记录路段。切换路段会同步更新自动记录的起终点坐标和触发速度。",
+        params_schema={
+            "type": "object",
+            "properties": {
+                "segment_name": {"type": "string", "description": "路段名称, 留空则查询"},
+                "query": {"type": "boolean", "description": "设为 true 查询当前路段和可用列表, 默认 false"},
+            },
+            "required": []
+        },
+        callback=set_road_segment,
+        category="scene",
+        risk_level="medium",
+        exposed=True,
+    )

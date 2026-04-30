@@ -22,6 +22,8 @@ from agent.actions import (
     misc_actions,
     planning_actions,
     knowledge_actions,
+    analysis_actions,
+    monitoring_actions,
 )
 
 
@@ -31,11 +33,13 @@ ACTION_MODULES = [
     recording_actions,   # 数据记录
     haptic_actions,      # 触感力反馈
     platform_actions,    # 平台准备/一键启停
-    scene_actions,       # 工况/地图/起点/确认
+    scene_actions,       # 工况/地图/起点/路段/确认
     visual_actions,      # 视觉补偿
     misc_actions,        # 评价元数据
     planning_actions,    # 底盘任务规划
     knowledge_actions,   # 底盘调校建议
+    analysis_actions,    # 历史数据加载/离线分析
+    monitoring_actions,  # 报警开关/实时监控
 ]
 
 

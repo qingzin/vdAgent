@@ -72,6 +72,35 @@ def register(registry, ctx):
         except Exception as e:
             return f"查看离线数据失败: {e}"
 
+    def clear_simulation_cache() -> str:
+        """清除 CarSim 离线仿真缓存目录"""
+        try:
+            import os
+            import shutil
+            target_dir = r"E:\01_TestData\01_DCH_Data\DCH\离线仿真"
+            if os.path.exists(target_dir):
+                for item in os.listdir(target_dir):
+                    item_path = os.path.join(target_dir, item)
+                    if os.path.isfile(item_path) or os.path.islink(item_path):
+                        os.unlink(item_path)
+                    elif os.path.isdir(item_path):
+                        shutil.rmtree(item_path)
+            ctx.ui.run_scheme = 0
+            return "已清除离线仿真缓存数据,方案计数器已归零。"
+        except Exception as e:
+            return f"清除缓存失败: {e}"
+
+    registry.register(
+        name="clear_simulation_cache",
+        description="清除 CarSim 离线仿真缓存目录下所有文件,"
+                    "并将方案计数器 run_scheme 归零。",
+        params_schema={"type": "object", "properties": {}, "required": []},
+        callback=clear_simulation_cache,
+        category="simulation",
+        risk_level="high",
+        exposed=True,
+    )
+
     registry.register(
         name="analyze_offline_result",
         description="分析离线仿真结果并跳转到结果对比页面。"
