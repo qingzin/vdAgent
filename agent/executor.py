@@ -4,8 +4,21 @@ Agent Executor - Agent 调度核心
 """
 
 try:
-    from PyQt5.QtCore import QObject, pyqtSignal, QThread
+    from PyQt5.QtCore import QObject, pyqtSignal, QThread, QTimer
 except ImportError:  # pragma: no cover - used by non-GUI tests.
+    class QTimer:
+        def __init__(self, parent=None):
+            self.timeout = _BoundSignal()
+
+        def setSingleShot(self, v):
+            pass
+
+        def start(self, ms=None):
+            pass
+
+        def stop(self):
+            pass
+
     class _BoundSignal:
         def __init__(self):
             self._slots = []
@@ -60,16 +73,21 @@ from agent.knowledge.store import KnowledgeStore
 
 SYSTEM_PROMPT = """你是一个驾驶模拟器控制系统的智能助手。用户会用中文自然语言描述想要进行的操作,你需要调用合适的工具来完成。
 
+多步执行规则:
+- 每个工具执行后，结果会自动反馈给你，你可以继续调用下一个工具
+- 当任务完成时，直接回复文字总结（不要再调用工具）
+- 如果上一步失败，分析原因并决定是否重试或调整方案
+- 最多可连续执行 10 步
+
 重要规则:
 1. 仔细理解用户意图,选择最匹配的工具
 2. 如果用户的描述不够明确,回复文字询问更多信息,不要猜测调用工具
 3. 参数值必须严格匹配工具定义中的可选值(如果有 enum 限制)
-4. 一次只调用一个工具
-5. 用中文回复
-6. 遇到复杂底盘目标或主观反馈(例如侧倾大、单移线表现差、方向盘中心区重、起伏舒适性差、修改悬架并验证),优先调用 plan_chassis_task 或 suggest_chassis_tuning 形成方案/建议,不要直接修改弹簧、稳定杆或触感参数
-7. 只有当用户明确确认了具体参数修改或准备动作时,才调用 set_spring、set_antiroll_bar、tune_haptic_feedback、prepare_test_scene、run_carsim、start_recording、stop_recording 等操作型工具
-8. 当用户询问"为什么"、寻求原理解释或需要分析时,优先调用 search_knowledge 检索领域知识库,结合当前系统状态给出有依据的回答
-9. 如果用户描述了一个有价值的调校经验或规律,主动调用 save_knowledge 将其保存
+4. 用中文回复
+5. 遇到复杂底盘目标或主观反馈(例如侧倾大、单移线表现差、方向盘中心区重、起伏舒适性差、修改悬架并验证),优先调用 plan_chassis_task 或 suggest_chassis_tuning 形成方案/建议,不要直接修改弹簧、稳定杆或触感参数
+6. 只有当用户明确确认了具体参数修改或准备动作时,才调用 set_spring、set_antiroll_bar、tune_haptic_feedback、prepare_test_scene、run_carsim、start_recording、stop_recording 等操作型工具
+7. 当用户询问"为什么"、寻求原理解释或需要分析时,优先调用 search_knowledge 检索领域知识库,结合当前系统状态给出有依据的回答
+8. 如果用户描述了一个有价值的调校经验或规律,主动调用 save_knowledge 将其保存
 
 当前系统支持的操作领域:
 - 车型选择与切换
@@ -219,7 +237,13 @@ class AgentExecutor(QObject):
         self.recent_plan_context = None
         self._worker_thread = None
         self._worker = None
-        self._is_busy = False  # 防止并发 LLM 请求
+        self._is_busy = False
+        self._auto_step_count = 0
+        self._auto_step_max = 10
+        self._multi_step_active = False
+        self._busy_watchdog = QTimer()
+        self._busy_watchdog.setSingleShot(True)
+        self._busy_watchdog.timeout.connect(self._on_busy_timeout)
 
     def process_user_input(self, user_message: str):
         """处理用户输入的自然语言"""
@@ -229,6 +253,8 @@ class AgentExecutor(QObject):
                               status="busy")
             return
         self._write_trace("user_input", user_message)
+        self._auto_step_count = 0
+        self._multi_step_active = True
         self._append_history({"role": "user", "content": user_message})
         self._call_llm()
 
@@ -252,11 +278,11 @@ class AgentExecutor(QObject):
         """在子线程中调用 LLM,注入当前系统上下文"""
         self._is_busy = True
         self.thinking.emit(True)
+        self._busy_watchdog.start(30000)
 
         tools = self.registry.get_tools_schema()
         self._write_trace("llm_request", payload={"tool_count": len(tools)})
 
-        # 构建动态上下文
         context_text = self._build_full_context()
 
         self._worker_thread = QThread()
@@ -328,8 +354,7 @@ class AgentExecutor(QObject):
 
     def _on_llm_response(self, response):
         """处理 LLM 响应"""
-        self._is_busy = False
-        self.thinking.emit(False)
+        self._stop_busy_watchdog()
 
         if response.has_tool_call:
             name = response.tool_name
@@ -348,12 +373,14 @@ class AgentExecutor(QObject):
                                   payload={"params": params})
                 self._append_history({"role": "assistant", "content": msg})
                 self.response_ready.emit(msg)
+                self._stop_multi_step()
                 return
 
             if self._should_auto_execute_action(name):
                 self._auto_execute_action(name, params)
                 return
 
+            self._multi_step_active = True
             summary = self._build_confirmation_summary(name, params)
             self._pending_action = (name, params)
 
@@ -367,12 +394,29 @@ class AgentExecutor(QObject):
             text = response.text or "(无响应)"
             self._write_trace("llm_text_response", text)
             self._append_history({"role": "assistant", "content": text})
+            self._auto_step_count = 0
+            self._multi_step_active = False
             self.response_ready.emit(text)
+
+    def _stop_busy_watchdog(self):
+        self._busy_watchdog.stop()
+        self._is_busy = False
+        self.thinking.emit(False)
+
+    def _on_busy_timeout(self):
+        """看门狗超时：强制重置 _is_busy，防止 agent 永久卡死。"""
+        self._is_busy = False
+        self.thinking.emit(False)
+        self._auto_step_count = 0
+        self._multi_step_active = False
+        self._stop_multi_step()
+        self.response_ready.emit("AI 响应超时，请重试。")
 
     def _on_llm_error(self, error_msg):
         """处理 LLM 错误"""
-        self._is_busy = False
-        self.thinking.emit(False)
+        self._stop_busy_watchdog()
+        self._auto_step_count = 0
+        self._multi_step_active = False
         msg = f"AI 助手出错:{error_msg}"
         self._write_trace("llm_error", msg, status="error")
         self.response_ready.emit(msg)
@@ -401,6 +445,7 @@ class AgentExecutor(QObject):
         })
 
         self.action_done.emit(result)
+        self._continue_or_finish(result)
 
     def cancel_action(self):
         """用户取消操作"""
@@ -411,6 +456,9 @@ class AgentExecutor(QObject):
         self._pending_action = None
         self._write_trace("cancel_action", "User cancelled action",
                           payload={"params": params}, action_name=name)
+
+        self._auto_step_count = 0
+        self._multi_step_active = False
 
         self._append_history({"role": "user", "content": "取消执行"})
         self._append_history({
@@ -425,7 +473,13 @@ class AgentExecutor(QObject):
         self.history.clear()
         self._pending_action = None
         self.recent_plan_context = None
+        self._auto_step_count = 0
+        self._multi_step_active = False
         self._write_trace("clear_history", "Conversation history cleared")
+
+    def _stop_multi_step(self):
+        self._auto_step_count = 0
+        self._multi_step_active = False
 
     @staticmethod
     def _build_memory_store():
@@ -456,7 +510,26 @@ class AgentExecutor(QObject):
         if status == "ok":
             self._capture_plan_context(name, params)
         self._append_history({"role": "assistant", "content": result})
-        self.response_ready.emit(result)
+        self._continue_or_finish(result)
+
+    def _continue_or_finish(self, result: str):
+        """多步执行循环：结果喂回 LLM，让 LLM 决定下一步。"""
+        if not self._multi_step_active:
+            self.response_ready.emit(result)
+            return
+
+        self._auto_step_count += 1
+        if self._auto_step_count >= self._auto_step_max:
+            self._auto_step_count = 0
+            self._multi_step_active = False
+            self.response_ready.emit(f"{result}\n\n(已达到最大执行步数 {self._auto_step_max}，自动停止)")
+            return
+
+        self._append_history({
+            "role": "user",
+            "content": f"上一步执行结果: {result}\n请继续执行下一步，或回复'完成'结束。"
+        })
+        self._call_llm()
 
     def _build_confirmation_summary(self, action_name: str, params: dict) -> str:
         summary = self.registry.format_action_summary(action_name, params)
