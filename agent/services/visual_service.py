@@ -16,13 +16,10 @@ VDC_FIELDS = [
 ]
 
 
-class VisualService:
-    def __init__(self, ctx):
-        self._ctx = ctx
+from agent.services._base import BaseService
 
-    @property
-    def _ui(self):
-        return self._ctx.ui
+class VisualService(BaseService):
+
 
     def set_profile(self, **kwargs) -> dict:
         """设置视觉补偿参数。返回 {vc: {...}, vdc: {...}}。"""

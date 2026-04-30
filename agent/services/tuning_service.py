@@ -1,13 +1,10 @@
 """车型与悬架调校 service — 封装所有 CarSim COM 和 UI widget 操作。"""
 
 
-class TuningService:
-    def __init__(self, ctx):
-        self._ctx = ctx
+from agent.services._base import BaseService
 
-    @property
-    def _ui(self):
-        return self._ctx.ui
+class TuningService(BaseService):
+
 
     @property
     def _carsim(self):

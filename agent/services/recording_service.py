@@ -1,13 +1,10 @@
 """数据记录 service。"""
 
 
-class RecordingService:
-    def __init__(self, ctx):
-        self._ctx = ctx
+from agent.services._base import BaseService
 
-    @property
-    def _ui(self):
-        return self._ctx.ui
+class RecordingService(BaseService):
+
 
     def is_recording(self) -> bool:
         return self._ctx.is_recording()

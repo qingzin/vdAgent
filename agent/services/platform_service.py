@@ -6,13 +6,10 @@
 """
 
 
-class PlatformService:
-    def __init__(self, ctx):
-        self._ctx = ctx
+from agent.services._base import BaseService
 
-    @property
-    def _ui(self):
-        return self._ctx.ui
+class PlatformService(BaseService):
+
 
     def one_click_start(self) -> str:
         self._ui.one_click_start()

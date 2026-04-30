@@ -1,13 +1,10 @@
 """仿真与工作区管理 service。"""
 
 
-class SimulationService:
-    def __init__(self, ctx):
-        self._ctx = ctx
+from agent.services._base import BaseService
 
-    @property
-    def _ui(self):
-        return self._ctx.ui
+class SimulationService(BaseService):
+
 
     def run_carsim(self) -> str:
         self._ui.RunDspace()

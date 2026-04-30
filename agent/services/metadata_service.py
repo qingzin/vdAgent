@@ -1,13 +1,10 @@
 """评价元数据 service。"""
 
 
-class MetadataService:
-    def __init__(self, ctx):
-        self._ctx = ctx
+from agent.services._base import BaseService
 
-    @property
-    def _ui(self):
-        return self._ctx.ui
+class MetadataService(BaseService):
+
 
     def get_all(self) -> dict:
         ui = self._ui

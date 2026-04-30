@@ -3,13 +3,10 @@
 import os
 
 
-class AnalysisService:
-    def __init__(self, ctx):
-        self._ctx = ctx
+from agent.services._base import BaseService
 
-    @property
-    def _ui(self):
-        return self._ctx.ui
+class AnalysisService(BaseService):
+
 
     def load_record(self, folder_path: str) -> list:
         """加载历史记录 CSV 数据并绘图。返回已加载的数据源列表。"""

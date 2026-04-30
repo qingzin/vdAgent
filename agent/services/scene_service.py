@@ -1,13 +1,10 @@
 """场景设置 service。"""
 
 
-class SceneService:
-    def __init__(self, ctx):
-        self._ctx = ctx
+from agent.services._base import BaseService
 
-    @property
-    def _ui(self):
-        return self._ctx.ui
+class SceneService(BaseService):
+
 
     # -- condition -----------------------------------------------------
 
@@ -82,3 +79,27 @@ class SceneService:
 
     def confirm_scene(self):
         self._ui.confirm_scenario_settings()
+
+    def list_conditions(self) -> list:
+        ui = self._ui
+        if hasattr(ui, 'condition_combo'):
+            return [ui.condition_combo.itemText(i) for i in range(ui.condition_combo.count())]
+        return []
+
+    def list_maps(self) -> list:
+        ui = self._ui
+        if hasattr(ui, 'map_combo'):
+            return [ui.map_combo.itemText(i) for i in range(ui.map_combo.count())]
+        return []
+
+    def list_start_points(self) -> list:
+        ui = self._ui
+        if hasattr(ui, 'start_point_combo'):
+            return [ui.start_point_combo.itemText(i) for i in range(ui.start_point_combo.count())]
+        return []
+
+    def list_road_segments(self) -> list:
+        ui = self._ui
+        if hasattr(ui, 'road_segment_combo'):
+            return [ui.road_segment_combo.itemText(i) for i in range(ui.road_segment_combo.count())]
+        return []

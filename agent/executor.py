@@ -241,7 +241,8 @@ class AgentExecutor(QObject):
         self._auto_step_count = 0
         self._auto_step_max = 10
         self._multi_step_active = False
-        self._message_queue = []
+        from collections import deque
+        self._message_queue = deque(maxlen=20)
         self._busy_watchdog = QTimer()
         self._busy_watchdog.setSingleShot(True)
         self._busy_watchdog.timeout.connect(self._on_busy_timeout)
@@ -262,7 +263,7 @@ class AgentExecutor(QObject):
     def _drain_queue(self):
         """处理消息队列中的下一条消息"""
         if self._message_queue:
-            next_msg = self._message_queue.pop(0)
+            next_msg = self._message_queue.popleft()
             self._write_trace("user_input_dequeued", next_msg,
                               payload={"remaining": len(self._message_queue)})
             self._auto_step_count = 0

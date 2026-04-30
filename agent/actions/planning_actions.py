@@ -2,49 +2,8 @@
 
 from agent.planner import PLAN_SYSTEM_PROMPT, build_chassis_plan_prompt
 from agent.knowledge.store import KnowledgeStore
+from agent.executor import _build_context_snapshot
 from ._helpers import relevant_experience_seeds
-
-
-def _get_current_state_snapshot(ui) -> str:
-    """Build a text snapshot of the current system state for the LLM."""
-    lines = []
-    car = getattr(ui, 'carName', None)
-    if car:
-        lines.append(f"当前车型: {car}")
-
-    setup = []
-    for attr, label in [
-        ('frontSpringName', '前弹簧'), ('rearSpringName', '后弹簧'),
-        ('frontRightSpringName', '前右弹簧'), ('rearRightSpringName', '后右弹簧'),
-        ('frontAuxMName', '前稳定杆'), ('rearAuxMName', '后稳定杆'),
-    ]:
-        val = getattr(ui, attr, None)
-        if val:
-            setup.append(f"{label}={val}")
-    if setup:
-        lines.append("悬架配置: " + ", ".join(setup))
-
-    scene = []
-    if hasattr(ui, 'condition_combo') and ui.condition_combo.count() > 0:
-        scene.append(f"工况={ui.condition_combo.currentText()}")
-    if hasattr(ui, 'map_combo') and ui.map_combo.count() > 0:
-        scene.append(f"地图={ui.map_combo.currentText()}")
-    if scene:
-        lines.append("场景: " + ", ".join(scene))
-
-    haptic = []
-    for attr, label in [
-        ('gain_fri', '摩擦增益'), ('gain_dam', '阻尼增益'),
-        ('gain_feedback', '回正增益'), ('gain_sa', '限位增益'),
-        ('gain_all', '手感轻重'),
-    ]:
-        val = getattr(ui, attr, None)
-        if val is not None:
-            haptic.append(f"{label}={val}")
-    if haptic:
-        lines.append("触感参数: " + ", ".join(haptic))
-
-    return "\n".join(f"- {l}" for l in lines)
 
 
 def register(registry, ctx):
@@ -57,7 +16,7 @@ def register(registry, ctx):
             return "LLM 客户端未就绪，无法生成计划。请检查 llama-server 连接。"
         ui = ctx.ui
 
-        current_state = _get_current_state_snapshot(ui)
+        current_state = _build_context_snapshot(ui)
         knowledge = KnowledgeStore().search_for_context(
             keyword=goal or complaint or "",
             limit=4,

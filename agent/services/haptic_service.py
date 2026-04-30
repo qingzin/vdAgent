@@ -10,13 +10,10 @@ HAPTIC_SPECS = [
 ]
 
 
-class HapticService:
-    def __init__(self, ctx):
-        self._ctx = ctx
+from agent.services._base import BaseService
 
-    @property
-    def _ui(self):
-        return self._ctx.ui
+class HapticService(BaseService):
+
 
     def get_all(self) -> dict:
         result = {}

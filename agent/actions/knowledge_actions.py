@@ -8,8 +8,8 @@
 
 from agent.planner import PLAN_SYSTEM_PROMPT, build_tuning_suggestion_prompt
 from agent.knowledge.store import KnowledgeStore
+from agent.executor import _build_context_snapshot
 from ._helpers import relevant_experience_seeds
-from .planning_actions import _get_current_state_snapshot
 
 
 def register(registry, ctx):
@@ -23,7 +23,7 @@ def register(registry, ctx):
             return "LLM 客户端未就绪，无法生成建议。请检查 llama-server 连接。"
         ui = ctx.ui
 
-        current_state = _get_current_state_snapshot(ui)
+        current_state = _build_context_snapshot(ui)
         knowledge = KnowledgeStore().search_for_context(
             keyword=complaint or objective or "",
             limit=4,

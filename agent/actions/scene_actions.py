@@ -10,14 +10,12 @@ def register(registry, ctx):
                            map_name: str = None,
                            start_point_name: str = None,
                            confirm: bool = True) -> str:
-        ui = ctx.ui
         msgs = []
 
         if condition_name is not None:
             resolved = svc.set_condition(condition_name)
             if resolved is None:
-                names = [ui.condition_combo.itemText(i)
-                         for i in range(ui.condition_combo.count())]
+                names = svc.list_conditions()
                 r, err = fuzzy_resolve(condition_name, names)
                 if err:
                     return err + f" 可用工况: {names}"
@@ -29,8 +27,7 @@ def register(registry, ctx):
         if map_name is not None:
             resolved = svc.set_map(map_name)
             if resolved is None:
-                names = [ui.map_combo.itemText(i)
-                         for i in range(ui.map_combo.count())]
+                names = svc.list_maps()
                 r, err = fuzzy_resolve(map_name, names)
                 if err:
                     return err + f" 可用地图: {names}"
@@ -42,8 +39,7 @@ def register(registry, ctx):
         if start_point_name is not None:
             resolved = svc.set_start_point(start_point_name)
             if resolved is None:
-                names = [ui.start_point_combo.itemText(i)
-                         for i in range(ui.start_point_combo.count())]
+                names = svc.list_start_points()
                 r, err = fuzzy_resolve(start_point_name, names)
                 if err:
                     return err + f" 可用起点: {names}"
@@ -107,17 +103,14 @@ def register(registry, ctx):
     )
 
     def set_road_segment(segment_name: str = None, query: bool = False) -> str:
-        ui = ctx.ui
         if query or segment_name is None:
             current = svc.get_road_segment()
-            names = [ui.road_segment_combo.itemText(i)
-                     for i in range(ui.road_segment_combo.count())]
+            names = svc.list_road_segments()
             return f"当前路段: {current}; 可用路段: {names}"
 
         resolved = svc.set_road_segment(segment_name)
         if resolved is None:
-            names = [ui.road_segment_combo.itemText(i)
-                     for i in range(ui.road_segment_combo.count())]
+            names = svc.list_road_segments()
             r, err = fuzzy_resolve(segment_name, names)
             if err:
                 return f"未找到路段: {segment_name}, 可用: {names}"

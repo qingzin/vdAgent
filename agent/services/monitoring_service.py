@@ -1,13 +1,10 @@
 """报警监控 service。"""
 
 
-class MonitoringService:
-    def __init__(self, ctx):
-        self._ctx = ctx
+from agent.services._base import BaseService
 
-    @property
-    def _ui(self):
-        return self._ctx.ui
+class MonitoringService(BaseService):
+
 
     def toggle_alarm(self, enable: bool):
         self._ui.toggle_alarm(enable)
