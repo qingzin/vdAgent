@@ -22,6 +22,7 @@ class ConfirmDialog(QDialog):
             Qt.Dialog | Qt.CustomizeWindowHint | Qt.WindowTitleHint
         )
         self.setMinimumWidth(400)
+        self.setMaximumWidth(600)
 
         layout = QVBoxLayout()
         layout.setContentsMargins(16, 16, 16, 16)
@@ -256,6 +257,7 @@ class ChatWidget(QDockWidget):
 
     def _on_agent_response(self, text):
         """收到 Agent 文本回复"""
+        self.confirm_dialog.hide()
         self._append_agent_message(text)
         self._enable_input()
 
@@ -283,6 +285,7 @@ class ChatWidget(QDockWidget):
 
     def _on_action_done(self, result):
         """操作执行完成"""
+        self.confirm_dialog.hide()
         self._append_system_message(f"✅ {result}")
         self._enable_input()
 
