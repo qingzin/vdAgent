@@ -7,26 +7,13 @@
 """
 
 from agent.planner import format_chassis_plan, suggest_chassis_tuning
-from agent.memory.store import AgentMemoryStore
 from agent.knowledge.store import KnowledgeStore
-
-
-def _relevant_experience_seeds(condition_name: str = None,
-                               keyword: str = None,
-                               limit: int = 3) -> list:
-    try:
-        return AgentMemoryStore().query_experience_seeds(
-            condition_name=condition_name,
-            keyword=keyword,
-            limit=limit,
-        )
-    except Exception:
-        return []
+from ._helpers import relevant_experience_seeds
 
 
 def _suggest_chassis_tuning_text(**kwargs) -> str:
     result = suggest_chassis_tuning(**kwargs)
-    result["recent_experiences"] = _relevant_experience_seeds(
+    result["recent_experiences"] = relevant_experience_seeds(
         condition_name=kwargs.get("condition_name"),
         keyword=(
             None if kwargs.get("condition_name")
@@ -65,18 +52,10 @@ def register(registry, ctx):
     # ---------- 知识库检索 ----------
     def search_knowledge(keyword: str = None, category: str = None, limit: int = 5) -> str:
         store = KnowledgeStore()
-        entries = store.search(keyword=keyword, category=category, limit=limit)
-        if not entries:
+        result = store.search_for_context(keyword=keyword, category=category, limit=limit)
+        if not result or result.startswith("（未找到"):
             return "未找到匹配的领域知识条目。"
-        parts = []
-        for e in entries:
-            meta = e["meta"]
-            title = meta.get("title", e["filename"])
-            cat = meta.get("category", "")
-            tags = meta.get("tags", [])
-            tag_str = "、".join(tags) if tags else "无"
-            parts.append(f"【{title}】分类:{cat} 标签:{tag_str}\n{e['summary']}...")
-        return "\n\n---\n\n".join(parts)
+        return result
 
     registry.register(
         name="search_knowledge",

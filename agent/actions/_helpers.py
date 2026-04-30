@@ -24,3 +24,18 @@ def fuzzy_resolve(target, available):
     if len(matches) > 1:
         return None, f"找到多个匹配: {matches}, 请指定更精确的名称。"
     return None, f"未找到 '{target}'"
+
+
+def relevant_experience_seeds(condition_name: str = None,
+                              keyword: str = None,
+                              limit: int = 3) -> list:
+    """查询近期相关经验种子。"""
+    try:
+        from agent.memory.store import AgentMemoryStore
+        return AgentMemoryStore().query_experience_seeds(
+            condition_name=condition_name,
+            keyword=keyword,
+            limit=limit,
+        )
+    except Exception:
+        return []

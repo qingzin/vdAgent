@@ -1,25 +1,12 @@
 """Planning actions exposed to the LLM."""
 
 from agent.planner import format_chassis_plan, plan_chassis_task
-from agent.memory.store import AgentMemoryStore
-
-
-def _relevant_experience_seeds(condition_name: str = None,
-                               keyword: str = None,
-                               limit: int = 3) -> list:
-    try:
-        return AgentMemoryStore().query_experience_seeds(
-            condition_name=condition_name,
-            keyword=keyword,
-            limit=limit,
-        )
-    except Exception:
-        return []
+from ._helpers import relevant_experience_seeds
 
 
 def _plan_chassis_task_text(**kwargs) -> str:
     result = plan_chassis_task(**kwargs)
-    result["recent_experiences"] = _relevant_experience_seeds(
+    result["recent_experiences"] = relevant_experience_seeds(
         condition_name=kwargs.get("condition_name"),
         keyword=(
             None if kwargs.get("condition_name")

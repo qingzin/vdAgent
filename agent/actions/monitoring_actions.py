@@ -9,17 +9,10 @@ def register(registry, ctx):
 
     def toggle_alarm(enable: bool = True) -> str:
         ui = ctx.ui
-        ui.alarm_enabled = bool(enable)
+        enable = bool(enable)
+        ui.toggle_alarm(enable)
         if hasattr(ui, 'alarm_toggle'):
-            ui.alarm_toggle.setText("报警开启" if enable else "报警关闭")
-        # 关闭时清除现有报警指示
-        if not enable:
-            for name in ['vel_x', 'steering_angle', 'steering_speed']:
-                if name in getattr(ui, 'alarm_indicators', {}):
-                    ui.alarm_indicators[name].setText('')
-        # 开启时触发一次绘图更新
-        if enable and hasattr(ui, 'update_plots'):
-            ui.update_plots()
+            ui.alarm_toggle.setChecked(enable)
         state = "已开启" if enable else "已关闭"
         return f"实时报警监控{state}。"
 

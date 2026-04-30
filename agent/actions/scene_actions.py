@@ -157,7 +157,6 @@ def register(registry, ctx):
                 idx = i
                 break
         if idx < 0:
-            # 模糊匹配
             names = [ui.road_segment_combo.itemText(i) for i in range(ui.road_segment_combo.count())]
             resolved, _err = fuzzy_resolve(segment_name, names)
             if resolved is None:
@@ -167,8 +166,7 @@ def register(registry, ctx):
                     idx = i
                     break
         if idx < 0:
-            names = [ui.road_segment_combo.itemText(i) for i in range(ui.road_segment_combo.count())]
-            return f"未找到路段: {segment_name}, 可用: {names}"
+            return f"未找到路段: {segment_name}"
 
         ui.road_segment_combo.setCurrentIndex(idx)
         if hasattr(ui, 'update_coordinates'):
