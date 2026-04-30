@@ -227,9 +227,6 @@ class ChatWidget(QDockWidget):
         self.executor.confirm_request.connect(self._on_confirm_request)
         self.executor.action_done.connect(self._on_action_done)
         self.executor.thinking.connect(self._on_thinking)
-        self.executor.chunk_received.connect(self._on_stream_chunk)
-        self._streaming_buffer = ""
-        self._streaming_active = False
 
     def _on_send(self):
         """发送用户消息"""
@@ -248,35 +245,8 @@ class ChatWidget(QDockWidget):
 
     def _on_agent_response(self, text):
         """收到 Agent 文本回复"""
-        if self._streaming_active:
-            self._streaming_active = False
-            self._streaming_buffer = ""
-        else:
-            self._append_agent_message(text)
+        self._append_agent_message(text)
         self._enable_input()
-
-    def _on_stream_chunk(self, token: str):
-        """流式输出：逐 token 追加到当前消息气泡"""
-        if not self._streaming_active:
-            self._streaming_active = True
-            self._streaming_buffer = ""
-            self._append_agent_message("")
-        self._streaming_buffer += token
-        self._update_last_agent_message(self._streaming_buffer)
-
-    def _update_last_agent_message(self, text: str):
-        """原地更新最后一条 agent 消息的内容（流式刷新）"""
-        html_text = text.replace('\n', '<br>')
-        cursor = self.chat_display.textCursor()
-        cursor.movePosition(QTextCursor.End)
-        cursor.movePosition(QTextCursor.StartOfBlock, QTextCursor.KeepAnchor)
-        cursor.removeSelectedText()
-        self.chat_display.append(
-            f'<div style="margin: 4px 0; text-align: left;">'
-            f'<span style="color: #1565C0; font-weight: bold;">'
-            f'🤖 {html_text}</span></div>'
-        )
-        self._scroll_to_bottom()
 
     def _on_confirm_request(self, name, params, summary):
         """收到确认请求"""
