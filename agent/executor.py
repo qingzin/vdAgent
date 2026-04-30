@@ -285,6 +285,14 @@ class AgentExecutor(QObject):
 
     def process_user_input(self, user_message: str):
         """处理用户输入的自然语言，忙碌时排队"""
+        # 内置命令
+        if user_message.strip().lower() in ("/help", "/帮助", "帮助", "你能做什么"):
+            self.response_ready.emit(self._build_help_message())
+            return
+        if user_message.strip().lower() in ("/examples", "/示例"):
+            self.response_ready.emit(self._build_examples_message())
+            return
+
         if self._is_busy:
             self._message_queue.append(user_message)
             self._write_trace("user_input_queued", user_message,
@@ -546,6 +554,85 @@ class AgentExecutor(QObject):
                 self._session_store.add_step(self._session_id, action_name, result)
             except Exception:
                 pass
+
+    def get_welcome_message(self) -> str:
+        """生成欢迎消息，展示 agent 能力概览。"""
+        return self._build_welcome_message()
+
+    def _build_welcome_message(self) -> str:
+        lines = ["你好！我是驾驶模拟器 AI 助手，可以帮你完成以下操作：", ""]
+        lines.append("**底盘调校**: 切换车型、调整弹簧/稳定杆、查询悬架配置")
+        lines.append("**仿真运行**: 运行 CarSim、打开 Simulink、编译 DSpace、查看离线数据")
+        lines.append("**数据记录**: 开始/结束记录、配置记录选项、加载历史数据")
+        lines.append("**场景设置**: 切换工况/地图/起点/路段")
+        lines.append("**触感调节**: 调整转向力反馈的摩擦/阻尼/回正/限位/手感轻重")
+        lines.append("**平台控制**: 一键启动/关闭运动平台、设置位置偏置")
+        lines.append("**视觉补偿**: 设置视觉运动跟随和延迟补偿")
+        lines.append("**报警监控**: 开启/关闭实时驾驶报警")
+        lines.append("**规划分析**: 针对侧倾、舒适性、中心区手感等问题给出专业建议")
+        lines.append("**知识库**: 检索底盘调校原理和经验，自动积累调校规律")
+        lines.append("")
+        lines.append("试试对我说: '查询当前配置'、'单移线侧倾大怎么调'、'帮我设置场景'")
+        lines.append("输入 /help 查看完整帮助，/examples 查看更多示例")
+        return "\n".join(lines)
+
+    def _build_help_message(self) -> str:
+        lines = ["## 可用操作 (25个)", ""]
+        lines.append("### 查询 (4)")
+        for n in ["get_current_setup", "get_current_scene", "get_recording_status",
+                   "search_knowledge"]:
+            d = self.registry.get_description(n)
+            lines.append(f"- **{n}**: {d}" if d else f"- {n}")
+        lines.append("")
+        lines.append("### 调校 (4)")
+        for n in ["select_vehicle", "set_spring", "set_antiroll_bar", "tune_haptic_feedback"]:
+            d = self.registry.get_description(n)
+            lines.append(f"- **{n}**: {d}" if d else f"- {n}")
+        lines.append("")
+        lines.append("### 仿真 (4)")
+        for n in ["run_carsim", "manage_simulation_workspace",
+                   "analyze_offline_result", "clear_simulation_cache"]:
+            d = self.registry.get_description(n)
+            lines.append(f"- **{n}**: {d}" if d else f"- {n}")
+        lines.append("")
+        lines.append("### 更多")
+        lines.append("- 记录: start/stop_recording, prepare_recording_session")
+        lines.append("- 场景: prepare_test_scene, set_road_segment")
+        lines.append("- 平台: one_click_platform_start/stop, prepare_platform")
+        lines.append("- 视觉: set_visual_profile")
+        lines.append("- 监控: toggle_alarm")
+        lines.append("- 规划: plan_chassis_task, suggest_chassis_tuning")
+        lines.append("- 元数据: prepare_evaluation_metadata, load_historical_record")
+        lines.append("- 知识: search_knowledge, save_knowledge")
+        lines.append("")
+        lines.append("输入 /examples 查看更多使用示例")
+        return "\n".join(lines)
+
+    def _build_examples_message(self) -> str:
+        lines = ["## 使用示例", ""]
+        lines.append("**场景准备 + 记录**:")
+        lines.append('"把工况设成单移线，地图用默认的，确认场景"')
+        lines.append('"帮我配置记录选项，开启自动记录"')
+        lines.append('"开始记录" ... "停止记录"')
+        lines.append("")
+        lines.append("**侧倾调校**:")
+        lines.append('"单移线侧倾大怎么办"（AI 先给分析建议）')
+        lines.append('"把前稳定杆换成 BAR_STIFFER"（确认后执行）')
+        lines.append('"跑一下仿真看看效果"')
+        lines.append("")
+        lines.append("**舒适性调校**:")
+        lines.append('"起伏路面舒适性差"（AI 给诊断和建议）')
+        lines.append('"前弹簧刚度降低5%"')
+        lines.append("")
+        lines.append("**触感调节**:")
+        lines.append('"查询当前触感参数"')
+        lines.append('"方向盘中心区太重了，帮我调轻一点"')
+        lines.append('"把摩擦增益降到1.5"')
+        lines.append("")
+        lines.append("**知识积累**:")
+        lines.append('"为什么侧倾大要先调稳定杆而不是弹簧"（检索知识库）')
+        lines.append('"记住刚才的经验：BAR_STIFFER 在单移线工况下侧倾角减小了15%"')
+        return "\n".join(lines)
 
     def get_restore_context(self) -> str:
         """启动时返回上次未完成会话的恢复提示。"""
