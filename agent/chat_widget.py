@@ -6,10 +6,68 @@ Chat Widget - 嵌入 PyQt 的聊天面板
 from PyQt5.QtWidgets import (
     QDockWidget, QWidget, QVBoxLayout, QHBoxLayout,
     QTextEdit, QLineEdit, QPushButton, QLabel, QFrame,
-    QMessageBox, QSizePolicy
+    QMessageBox, QSizePolicy, QDialog
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer
 from PyQt5.QtGui import QFont, QColor, QTextCursor
+
+
+class ConfirmDialog(QDialog):
+    """非模态确认对话框 — 始终置顶，不受 Dock 布局裁剪影响。"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("确认操作")
+        self.setWindowFlags(
+            Qt.Dialog | Qt.CustomizeWindowHint | Qt.WindowTitleHint
+        )
+        self.setMinimumWidth(400)
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+
+        self.summary_label = QLabel()
+        self.summary_label.setWordWrap(True)
+        self.summary_label.setStyleSheet("""
+            QLabel {
+                background-color: #fff3cd;
+                border: 1px solid #ffc107;
+                border-radius: 4px;
+                padding: 12px;
+                font-size: 12px;
+            }
+        """)
+        layout.addWidget(self.summary_label)
+
+        btn_layout = QHBoxLayout()
+        self.confirm_btn = QPushButton(" 确认执行")
+        self.confirm_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #28a745; color: white;
+                border: none; border-radius: 4px;
+                padding: 8px 20px; font-weight: bold;
+            }
+            QPushButton:hover { background-color: #218838; }
+        """)
+        self.cancel_btn = QPushButton(" 取消")
+        self.cancel_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #dc3545; color: white;
+                border: none; border-radius: 4px;
+                padding: 8px 20px; font-weight: bold;
+            }
+            QPushButton:hover { background-color: #c82333; }
+        """)
+        btn_layout.addStretch()
+        btn_layout.addWidget(self.confirm_btn)
+        btn_layout.addWidget(self.cancel_btn)
+        layout.addLayout(btn_layout)
+
+        self.setLayout(layout)
+
+    def set_summary(self, text: str):
+        self.summary_label.setText(f" 确认执行？\n{text}")
 
 
 class ChatWidget(QDockWidget):
@@ -90,57 +148,10 @@ class ChatWidget(QDockWidget):
         """)
         layout.addWidget(self.chat_display, stretch=1)
 
-        # --- 确认操作区域（默认隐藏）---
-        self.confirm_widget = QWidget()
-        confirm_layout = QVBoxLayout()
-        confirm_layout.setContentsMargins(0, 0, 0, 0)
-        confirm_layout.setSpacing(4)
-
-        self.confirm_label = QLabel()
-        self.confirm_label.setWordWrap(True)
-        self.confirm_label.setStyleSheet("""
-            QLabel {
-                background-color: #fff3cd;
-                border: 1px solid #ffc107;
-                border-radius: 4px;
-                padding: 8px;
-                font-size: 12px;
-            }
-        """)
-        confirm_layout.addWidget(self.confirm_label)
-
-        btn_layout = QHBoxLayout()
-        self.confirm_btn = QPushButton("✓ 确认执行")
-        self.confirm_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #28a745;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                padding: 6px 16px;
-                font-weight: bold;
-            }
-            QPushButton:hover { background-color: #218838; }
-        """)
-        self.cancel_btn = QPushButton("✗ 取消")
-        self.cancel_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #dc3545;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                padding: 6px 16px;
-                font-weight: bold;
-            }
-            QPushButton:hover { background-color: #c82333; }
-        """)
-        btn_layout.addWidget(self.confirm_btn)
-        btn_layout.addWidget(self.cancel_btn)
-        confirm_layout.addLayout(btn_layout)
-
-        self.confirm_widget.setLayout(confirm_layout)
-        self.confirm_widget.setVisible(False)
-        layout.addWidget(self.confirm_widget)
+        # --- 确认对话框（独立窗口，始终可见）---
+        self.confirm_dialog = ConfirmDialog(self)
+        self.confirm_btn = self.confirm_dialog.confirm_btn
+        self.cancel_btn = self.confirm_dialog.cancel_btn
 
         # --- 思考中指示器（默认隐藏）---
         self.thinking_label = QLabel("⏳ AI 正在思考...")
@@ -251,22 +262,22 @@ class ChatWidget(QDockWidget):
     def _on_confirm_request(self, name, params, summary):
         """收到确认请求"""
         self._append_agent_message(f"我将执行以下操作：\n{summary}")
-
-        self.confirm_label.setText(f"⚠️ 确认执行？\n{summary}")
-        self.confirm_widget.setVisible(True)
+        self.confirm_dialog.set_summary(summary)
+        self.confirm_dialog.show()
+        self.confirm_dialog.raise_()
         self.input_field.setEnabled(False)
         self.send_btn.setEnabled(False)
 
     def _on_confirm(self):
         """用户确认执行"""
-        self.confirm_widget.setVisible(False)
-        self._append_user_message("✓ 确认执行")
+        self.confirm_dialog.hide()
+        self._append_user_message(" 确认执行")
         self.executor.confirm_action()
 
     def _on_cancel(self):
         """用户取消执行"""
-        self.confirm_widget.setVisible(False)
-        self._append_user_message("✗ 取消")
+        self.confirm_dialog.hide()
+        self._append_user_message(" 取消")
         self.executor.cancel_action()
         self._enable_input()
 
@@ -289,7 +300,7 @@ class ChatWidget(QDockWidget):
         """清空聊天记录"""
         self.chat_display.clear()
         self.executor.clear_history()
-        self.confirm_widget.setVisible(False)
+        self.confirm_dialog.hide()
         self._enable_input()
         self._append_system_message("对话已清空。请输入新的指令。")
 
