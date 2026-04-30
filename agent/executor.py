@@ -178,10 +178,8 @@ def _build_context_snapshot(ui) -> str:
 
     return "\n".join(f"- {p}" for p in parts)
 
-# 对话历史最多保留多少条消息(user + assistant 共同计数)
-# 每轮对话通常 2-3 条(user / assistant / optional tool-confirm user)
-# 保留 20 条大约能覆盖最近 7-10 轮
-MAX_HISTORY_MESSAGES = 20
+MAX_HISTORY_MESSAGES = 12
+MAX_HISTORY_TOKENS_EST = 6000
 AUTO_EXECUTE_CATEGORIES = {"planning", "knowledge"}
 
 
@@ -283,20 +281,26 @@ class AgentExecutor(QObject):
             self._call_llm()
 
     def _append_history(self, message: dict):
-        """追加一条消息到历史,并应用滑动窗口"""
+        """追加一条消息到历史,并应用滑动窗口。长消息自动截断。"""
+        content = message.get("content", "")
+        if len(content) > 600:
+            message = dict(message)
+            message["content"] = content[:600] + "...(已截断)"
         self.history.append(message)
         self._trim_history()
 
     def _trim_history(self):
-        """
-        保留最近 max_history 条消息。
-        尽量避免在 user->assistant 配对中间切断(虽然当前实现是简单截断,
-        LLM 通常能容忍历史开头是 assistant 消息)
-        """
+        """按条数和估算 token 数双重截断对话历史。"""
+        # 条数截断
         if len(self.history) > self.max_history:
-            # 从头部丢弃,保留最近的
             drop_count = len(self.history) - self.max_history
             self.history = self.history[drop_count:]
+
+        # Token 截断（中文字符按 1 token 估算，英文按 0.3 token/字符）
+        total = sum(len(m.get("content", "")) for m in self.history)
+        while total > MAX_HISTORY_TOKENS_EST and len(self.history) > 4:
+            removed = self.history.pop(0)
+            total -= len(removed.get("content", ""))
 
     def _call_llm(self):
         """在子线程中调用 LLM,注入当前系统上下文"""
