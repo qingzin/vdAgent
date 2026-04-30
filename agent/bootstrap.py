@@ -99,4 +99,9 @@ def attach_agent(main_window, llm_url: str = "http://127.0.0.1:8080"):
     main_window._agent_connection_timer = connection_timer
     main_window._agent_toggle_btn = toggle_ai_btn
 
+    # 8. 检查有无未完成的会话
+    restore_text = executor.get_restore_context()
+    if restore_text:
+        chat_dock.append_system_message(restore_text)
+
     print("[Agent] AI 助手已加载完成")

@@ -69,6 +69,7 @@ except ImportError:  # pragma: no cover - used by non-GUI tests.
 from agent.memory.models import EngineeringExperienceSeed, ProcessTrace
 from agent.memory.store import AgentMemoryStore, NullAgentMemoryStore
 from agent.knowledge.store import KnowledgeStore
+from agent.session_store import SessionStore
 
 
 SYSTEM_PROMPT = """你是一个驾驶模拟器控制系统的智能助手。用户会用中文自然语言描述想要进行的操作,你需要调用合适的工具来完成。
@@ -241,6 +242,8 @@ class AgentExecutor(QObject):
         self._auto_step_count = 0
         self._auto_step_max = 10
         self._multi_step_active = False
+        self._session_store = SessionStore()
+        self._session_id = None
         from collections import deque
         self._message_queue = deque(maxlen=20)
         self._busy_watchdog = QTimer()
@@ -453,6 +456,7 @@ class AgentExecutor(QObject):
                           payload={"params": params}, action_name=name)
         if status == "ok":
             self._write_experience_seed(name, params, result)
+        self._record_step(name, result)
 
         self._append_history({"role": "user", "content": "确认执行"})
         self._append_history({
@@ -489,7 +493,7 @@ class AgentExecutor(QObject):
         """清空对话历史"""
         self.history.clear()
         self._pending_action = None
-        self.recent_plan_context = None
+        self.complete_session()
         self._auto_step_count = 0
         self._multi_step_active = False
         self._write_trace("clear_history", "Conversation history cleared")
@@ -497,6 +501,31 @@ class AgentExecutor(QObject):
     def _stop_multi_step(self):
         self._auto_step_count = 0
         self._multi_step_active = False
+
+    def _record_step(self, action_name: str, result: str):
+        """跨会话持久化：记录每一步操作。"""
+        if self._session_id:
+            try:
+                self._session_store.add_step(self._session_id, action_name, result)
+            except Exception:
+                pass
+
+    def get_restore_context(self) -> str:
+        """启动时返回上次未完成会话的恢复提示。"""
+        try:
+            return self._session_store.build_restore_prompt()
+        except Exception:
+            return ""
+
+    def complete_session(self):
+        """标记当前会话为已完成。"""
+        if self._session_id:
+            try:
+                self._session_store.complete(self._session_id)
+            except Exception:
+                pass
+        self._session_id = None
+        self.recent_plan_context = None
 
     @staticmethod
     def _build_memory_store():
@@ -526,6 +555,7 @@ class AgentExecutor(QObject):
                           payload={"params": params}, action_name=name)
         if status == "ok":
             self._capture_plan_context(name, params)
+        self._record_step(name, result)
         self._append_history({"role": "assistant", "content": result})
         self._continue_or_finish(result)
 
@@ -571,14 +601,26 @@ class AgentExecutor(QObject):
     def _capture_plan_context(self, action_name: str, params: dict):
         if action_name not in {"plan_chassis_task", "suggest_chassis_tuning"}:
             return
+        goal = params.get("goal") or params.get("complaint")
+        condition = params.get("condition_name")
         self.recent_plan_context = {
             "action": action_name,
-            "goal": params.get("goal") or params.get("complaint"),
-            "condition_name": params.get("condition_name"),
+            "goal": goal,
+            "condition_name": condition,
         }
+        # 创建/更新跨会话持久化记录
+        ui = self._get_ui()
+        setup = _build_context_snapshot(ui) if ui else ""
+        self._session_id = self._session_store.save(
+            session_id=self._session_id,
+            goal=goal,
+            condition_name=condition,
+            vehicle_setup_snapshot=setup,
+            status="active",
+        )
         self._write_trace(
             "plan_context_saved",
-            "Saved LLM-generated plan context",
+            f"Session {self._session_id} saved",
             payload=self.recent_plan_context,
             action_name=action_name,
         )

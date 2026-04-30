@@ -331,6 +331,10 @@ class ChatWidget(QDockWidget):
         cursor.movePosition(QTextCursor.End)
         self.chat_display.setTextCursor(cursor)
 
+    def append_system_message(self, text: str):
+        """供外部调用的系统消息追加方法。"""
+        self._append_system_message(text)
+
     def update_connection_status(self, connected: bool):
         """更新 LLM 连接状态指示"""
         if connected:
