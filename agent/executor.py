@@ -178,9 +178,25 @@ def _build_context_snapshot(ui) -> str:
 
     return "\n".join(f"- {p}" for p in parts)
 
-MAX_HISTORY_MESSAGES = 12
+# 对话历史最多保留多少条消息(user + assistant 共同计数)
+# 每轮对话通常 2-3 条(user / assistant / optional tool-confirm user)
+# 保留 20 条大约能覆盖最近 7-10 轮
+MAX_HISTORY_MESSAGES = 20
 MAX_HISTORY_TOKENS_EST = 6000
+MAX_HISTORY_MESSAGE_CHARS = 1200
+MAX_HISTORY_RETRY_MESSAGES = 4
+MAX_HISTORY_RETRY_MESSAGE_CHARS = 500
+HISTORY_TRUNCATION_SUFFIX = "\n...(history truncated)"
 AUTO_EXECUTE_CATEGORIES = {"planning", "knowledge"}
+RECOVERABLE_LLM_ERROR_MARKERS = (
+    "400",
+    "bad request",
+    "context",
+    "context length",
+    "maximum context",
+    "too many tokens",
+    "token",
+)
 
 
 class AgentWorker(QObject):
@@ -237,6 +253,7 @@ class AgentExecutor(QObject):
         self._worker_thread = None
         self._worker = None
         self._is_busy = False
+        self._llm_recovery_attempted = False
         self._auto_step_count = 0
         self._auto_step_max = 10
         self._multi_step_active = False
@@ -250,20 +267,13 @@ class AgentExecutor(QObject):
 
     def process_user_input(self, user_message: str):
         """处理用户输入的自然语言，忙碌时排队"""
-        # 内置命令
-        if user_message.strip().lower() in ("/help", "/帮助", "帮助", "你能做什么"):
-            self.response_ready.emit(self._build_help_message())
-            return
-        if user_message.strip().lower() in ("/examples", "/示例"):
-            self.response_ready.emit(self._build_examples_message())
-            return
-
         if self._is_busy:
             self._message_queue.append(user_message)
             self._write_trace("user_input_queued", user_message,
                               status="busy", payload={"queue_len": len(self._message_queue)})
             return
         self._write_trace("user_input", user_message)
+        self._llm_recovery_attempted = False
         self._auto_step_count = 0
         self._multi_step_active = True
         self._append_history({"role": "user", "content": user_message})
@@ -275,32 +285,46 @@ class AgentExecutor(QObject):
             next_msg = self._message_queue.popleft()
             self._write_trace("user_input_dequeued", next_msg,
                               payload={"remaining": len(self._message_queue)})
+            self._llm_recovery_attempted = False
             self._auto_step_count = 0
             self._multi_step_active = True
             self._append_history({"role": "user", "content": next_msg})
             self._call_llm()
 
     def _append_history(self, message: dict):
-        """追加一条消息到历史,并应用滑动窗口。长消息自动截断。"""
-        content = message.get("content", "")
-        if len(content) > 600:
-            message = dict(message)
-            message["content"] = content[:600] + "...(已截断)"
+        """追加一条消息到历史,并应用滑动窗口。"""
+        message = self._bounded_history_message(message, MAX_HISTORY_MESSAGE_CHARS)
         self.history.append(message)
         self._trim_history()
 
     def _trim_history(self):
         """按条数和估算 token 数双重截断对话历史。"""
-        # 条数截断
         if len(self.history) > self.max_history:
             drop_count = len(self.history) - self.max_history
             self.history = self.history[drop_count:]
 
-        # Token 截断（中文字符按 1 token 估算，英文按 0.3 token/字符）
-        total = sum(len(m.get("content", "")) for m in self.history)
-        while total > MAX_HISTORY_TOKENS_EST and len(self.history) > 4:
+        total = sum(self._estimate_history_tokens(m.get("content", ""))
+                    for m in self.history)
+        while total > MAX_HISTORY_TOKENS_EST and len(self.history) > 1:
             removed = self.history.pop(0)
-            total -= len(removed.get("content", ""))
+            total -= self._estimate_history_tokens(removed.get("content", ""))
+
+    @staticmethod
+    def _bounded_history_message(message: dict, max_chars: int) -> dict:
+        content = message.get("content", "")
+        if not isinstance(content, str):
+            content = str(content)
+        if len(content) <= max_chars:
+            return message
+        bounded = dict(message)
+        bounded["content"] = content[:max_chars] + HISTORY_TRUNCATION_SUFFIX
+        return bounded
+
+    @staticmethod
+    def _estimate_history_tokens(content: str) -> int:
+        if not isinstance(content, str):
+            content = str(content)
+        return max(1, len(content))
 
     def _call_llm(self):
         """在子线程中调用 LLM,注入当前系统上下文"""
@@ -323,6 +347,7 @@ class AgentExecutor(QObject):
         self._worker.error.connect(self._on_llm_error)
         self._worker.finished.connect(self._worker_thread.quit)
         self._worker.error.connect(self._worker_thread.quit)
+        # 确保 thread 和 worker 对象在线程结束后被清理
         self._worker_thread.finished.connect(self._worker.deleteLater)
         self._worker_thread.finished.connect(self._worker_thread.deleteLater)
 
@@ -419,6 +444,9 @@ class AgentExecutor(QObject):
             self.confirm_request.emit(name, params, summary)
         else:
             text = response.text or "(无响应)"
+            if self._is_recoverable_llm_error(text):
+                self._retry_llm_with_compacted_history(text)
+                return
             self._write_trace("llm_text_response", text)
             self._append_history({"role": "assistant", "content": text})
             self._auto_step_count = 0
@@ -444,12 +472,44 @@ class AgentExecutor(QObject):
     def _on_llm_error(self, error_msg):
         """处理 LLM 错误"""
         self._stop_busy_watchdog()
+        if self._is_recoverable_llm_error(error_msg):
+            self._retry_llm_with_compacted_history(error_msg)
+            return
         self._auto_step_count = 0
         self._multi_step_active = False
         msg = f"AI 助手出错:{error_msg}"
         self._write_trace("llm_error", msg, status="error")
         self.response_ready.emit(msg)
         self._drain_queue()
+
+    def _is_recoverable_llm_error(self, error_msg: str) -> bool:
+        msg = str(error_msg).lower()
+        return any(marker in msg for marker in RECOVERABLE_LLM_ERROR_MARKERS)
+
+    def _retry_llm_with_compacted_history(self, error_msg: str):
+        self._stop_busy_watchdog()
+        if self._llm_recovery_attempted:
+            self._auto_step_count = 0
+            self._multi_step_active = False
+            msg = f"AI 助手出错:{error_msg}"
+            self._write_trace("llm_error", msg, status="error")
+            self.response_ready.emit(msg)
+            self._drain_queue()
+            return
+
+        self._llm_recovery_attempted = True
+        self.history = [
+            self._bounded_history_message(m, MAX_HISTORY_RETRY_MESSAGE_CHARS)
+            for m in self.history[-MAX_HISTORY_RETRY_MESSAGES:]
+        ]
+        self._trim_history()
+        self._write_trace(
+            "llm_retry_compacted_history",
+            str(error_msg),
+            status="retry",
+            payload={"history_len": len(self.history)},
+        )
+        self._call_llm()
 
     def confirm_action(self):
         """用户确认执行操作"""
@@ -520,85 +580,6 @@ class AgentExecutor(QObject):
                 self._session_store.add_step(self._session_id, action_name, result)
             except Exception:
                 pass
-
-    def get_welcome_message(self) -> str:
-        """生成欢迎消息，展示 agent 能力概览。"""
-        return self._build_welcome_message()
-
-    def _build_welcome_message(self) -> str:
-        lines = ["你好！我是驾驶模拟器 AI 助手，可以帮你完成以下操作：", ""]
-        lines.append("**底盘调校**: 切换车型、调整弹簧/稳定杆、查询悬架配置")
-        lines.append("**仿真运行**: 运行 CarSim、打开 Simulink、编译 DSpace、查看离线数据")
-        lines.append("**数据记录**: 开始/结束记录、配置记录选项、加载历史数据")
-        lines.append("**场景设置**: 切换工况/地图/起点/路段")
-        lines.append("**触感调节**: 调整转向力反馈的摩擦/阻尼/回正/限位/手感轻重")
-        lines.append("**平台控制**: 一键启动/关闭运动平台、设置位置偏置")
-        lines.append("**视觉补偿**: 设置视觉运动跟随和延迟补偿")
-        lines.append("**报警监控**: 开启/关闭实时驾驶报警")
-        lines.append("**规划分析**: 针对侧倾、舒适性、中心区手感等问题给出专业建议")
-        lines.append("**知识库**: 检索底盘调校原理和经验，自动积累调校规律")
-        lines.append("")
-        lines.append("试试对我说: '查询当前配置'、'单移线侧倾大怎么调'、'帮我设置场景'")
-        lines.append("输入 /help 查看完整帮助，/examples 查看更多示例")
-        return "\n".join(lines)
-
-    def _build_help_message(self) -> str:
-        lines = ["## 可用操作 (25个)", ""]
-        lines.append("### 查询 (4)")
-        for n in ["get_current_setup", "get_current_scene", "get_recording_status",
-                   "search_knowledge"]:
-            d = self.registry.get_description(n)
-            lines.append(f"- **{n}**: {d}" if d else f"- {n}")
-        lines.append("")
-        lines.append("### 调校 (4)")
-        for n in ["select_vehicle", "set_spring", "set_antiroll_bar", "tune_haptic_feedback"]:
-            d = self.registry.get_description(n)
-            lines.append(f"- **{n}**: {d}" if d else f"- {n}")
-        lines.append("")
-        lines.append("### 仿真 (4)")
-        for n in ["run_carsim", "manage_simulation_workspace",
-                   "analyze_offline_result", "clear_simulation_cache"]:
-            d = self.registry.get_description(n)
-            lines.append(f"- **{n}**: {d}" if d else f"- {n}")
-        lines.append("")
-        lines.append("### 更多")
-        lines.append("- 记录: start/stop_recording, prepare_recording_session")
-        lines.append("- 场景: prepare_test_scene, set_road_segment")
-        lines.append("- 平台: one_click_platform_start/stop, prepare_platform")
-        lines.append("- 视觉: set_visual_profile")
-        lines.append("- 监控: toggle_alarm")
-        lines.append("- 规划: plan_chassis_task, suggest_chassis_tuning")
-        lines.append("- 元数据: prepare_evaluation_metadata, load_historical_record")
-        lines.append("- 知识: search_knowledge, save_knowledge")
-        lines.append("")
-        lines.append("输入 /examples 查看更多使用示例")
-        return "\n".join(lines)
-
-    def _build_examples_message(self) -> str:
-        lines = ["## 使用示例", ""]
-        lines.append("**场景准备 + 记录**:")
-        lines.append('"把工况设成单移线，地图用默认的，确认场景"')
-        lines.append('"帮我配置记录选项，开启自动记录"')
-        lines.append('"开始记录" ... "停止记录"')
-        lines.append("")
-        lines.append("**侧倾调校**:")
-        lines.append('"单移线侧倾大怎么办"（AI 先给分析建议）')
-        lines.append('"把前稳定杆换成 BAR_STIFFER"（确认后执行）')
-        lines.append('"跑一下仿真看看效果"')
-        lines.append("")
-        lines.append("**舒适性调校**:")
-        lines.append('"起伏路面舒适性差"（AI 给诊断和建议）')
-        lines.append('"前弹簧刚度降低5%"')
-        lines.append("")
-        lines.append("**触感调节**:")
-        lines.append('"查询当前触感参数"')
-        lines.append('"方向盘中心区太重了，帮我调轻一点"')
-        lines.append('"把摩擦增益降到1.5"')
-        lines.append("")
-        lines.append("**知识积累**:")
-        lines.append('"为什么侧倾大要先调稳定杆而不是弹簧"（检索知识库）')
-        lines.append('"记住刚才的经验：BAR_STIFFER 在单移线工况下侧倾角减小了15%"')
-        return "\n".join(lines)
 
     def get_restore_context(self) -> str:
         """启动时返回上次未完成会话的恢复提示。"""

@@ -1,7 +1,14 @@
 from unittest.mock import patch
 
-from agent.executor import AgentExecutor
-from agent.memory.store import AgentMemoryStore
+from agent.executor import (
+    HISTORY_TRUNCATION_SUFFIX,
+    MAX_HISTORY_MESSAGE_CHARS,
+    MAX_HISTORY_RETRY_MESSAGE_CHARS,
+    MAX_HISTORY_RETRY_MESSAGES,
+    MAX_HISTORY_TOKENS_EST,
+    AgentExecutor,
+)
+from agent.memory.store import AgentMemoryStore, NullAgentMemoryStore
 from agent.registry import ActionRegistry
 
 
@@ -278,3 +285,116 @@ def test_memory_initialization_failure_does_not_block_executor():
 
     assert getattr(executor.memory_store, "disabled", False) is True
     executor._write_trace("smoke", "memory disabled")
+
+
+def test_history_is_bounded_by_message_size_and_total_tokens():
+    executor = AgentExecutor(
+        ActionRegistry(),
+        llm_client=None,
+        memory_store=NullAgentMemoryStore("test"),
+    )
+
+    for i in range(12):
+        executor._append_history({
+            "role": "user",
+            "content": f"{i}-" + ("x" * (MAX_HISTORY_MESSAGE_CHARS + 100)),
+        })
+
+    assert len(executor.history) <= executor.max_history
+    assert sum(len(m["content"]) for m in executor.history) <= MAX_HISTORY_TOKENS_EST
+    assert all(len(m["content"]) <= MAX_HISTORY_MESSAGE_CHARS + len(HISTORY_TRUNCATION_SUFFIX)
+               for m in executor.history)
+    assert executor.history[-1]["content"].endswith(HISTORY_TRUNCATION_SUFFIX)
+
+
+def test_long_user_input_is_truncated_before_llm_history():
+    executor = AgentExecutor(
+        ActionRegistry(),
+        llm_client=None,
+        memory_store=NullAgentMemoryStore("test"),
+    )
+    calls = []
+    executor._call_llm = lambda: calls.append(list(executor.history))
+
+    executor.process_user_input("u" * (MAX_HISTORY_MESSAGE_CHARS + 500))
+
+    assert len(calls) == 1
+    assert len(executor.history) == 1
+    assert executor.history[0]["content"].endswith(HISTORY_TRUNCATION_SUFFIX)
+    assert len(executor.history[0]["content"]) < MAX_HISTORY_MESSAGE_CHARS + 500
+
+
+def test_long_action_result_keeps_ui_result_but_truncates_history():
+    registry = ActionRegistry()
+    long_result = "r" * (MAX_HISTORY_MESSAGE_CHARS + 500)
+    registry.register(
+        name="set_spring",
+        description="set spring",
+        params_schema={"type": "object", "properties": {}, "required": []},
+        callback=lambda position, spring_name: long_result,
+        category="tuning",
+        risk_level="high",
+        exposed=True,
+    )
+    executor = AgentExecutor(
+        registry,
+        llm_client=None,
+        memory_store=NullAgentMemoryStore("test"),
+    )
+    executor._pending_action = (
+        "set_spring",
+        {"position": "front", "spring_name": "K1"},
+    )
+    action_results = []
+    executor.action_done.connect(action_results.append)
+
+    executor.confirm_action()
+
+    assert action_results == [long_result]
+    assert any(m["content"].endswith(HISTORY_TRUNCATION_SUFFIX)
+               for m in executor.history)
+    assert all(len(m["content"]) <= MAX_HISTORY_MESSAGE_CHARS + len(HISTORY_TRUNCATION_SUFFIX)
+               for m in executor.history)
+
+
+def test_llm_400_context_error_compacts_history_and_retries():
+    executor = AgentExecutor(
+        ActionRegistry(),
+        llm_client=None,
+        memory_store=NullAgentMemoryStore("test"),
+    )
+    for i in range(8):
+        executor._append_history({
+            "role": "user",
+            "content": f"{i}-" + ("x" * MAX_HISTORY_MESSAGE_CHARS),
+        })
+    calls = []
+    executor._call_llm = lambda: calls.append(list(executor.history))
+    executor._is_busy = True
+
+    executor._on_llm_error("400 Bad Request: context length exceeded")
+
+    assert len(calls) == 1
+    assert len(executor.history) <= MAX_HISTORY_RETRY_MESSAGES
+    assert all(len(m["content"]) <= MAX_HISTORY_RETRY_MESSAGE_CHARS + len(HISTORY_TRUNCATION_SUFFIX)
+               for m in executor.history)
+
+
+def test_busy_timeout_resets_state_and_emits_fallback():
+    executor = AgentExecutor(
+        ActionRegistry(),
+        llm_client=None,
+        memory_store=NullAgentMemoryStore("test"),
+    )
+    responses = []
+    executor.response_ready.connect(responses.append)
+    executor._is_busy = True
+    executor._multi_step_active = True
+    executor._auto_step_count = 3
+
+    executor._on_busy_timeout()
+
+    assert executor._is_busy is False
+    assert executor._multi_step_active is False
+    assert executor._auto_step_count == 0
+    assert responses[-1] == "AI 响应超时，请重试。"

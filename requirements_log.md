@@ -9,3 +9,12 @@
 - Cover the behavior with pytest tests that avoid GUI and hardware dependencies.
 
 Conflict/reasonableness check: this aligns with the existing single-tool executor design because it adds context and confirmation guidance without introducing an autonomous multi-step executor, third-party dependencies, or GUI flow changes.
+
+## 2026-05-01 - Agent history bounds and recovery verification
+
+- Fix the agent conversation history so it remains bounded by both message count and estimated token/character budget.
+- Ensure long user inputs and long action/tool results are truncated before they are retained in LLM history, while preserving full UI-facing action results.
+- Verify recovery behavior for long input, long action result, LLM 400/context overflow, and LLM timeout paths.
+- Identify the git commit associated with the history-size-control regression using git history output rather than speculation.
+
+Conflict/reasonableness check: this is scoped to executor/LLM recovery behavior and test coverage. It does not require a new dependency, schema change, governance policy change, or model configuration change.
