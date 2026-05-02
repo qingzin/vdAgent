@@ -1,10 +1,15 @@
 """平台控制 action — 通过 PlatformService 操作。"""
 
+from ._helpers import require_not_recording
+
 
 def register(registry, ctx):
     svc = ctx.service('platform')
 
     def one_click_platform_start() -> str:
+        guard = require_not_recording(ctx, "一键启动平台")
+        if guard:
+            return guard
         try:
             return svc.one_click_start()
         except Exception as e:
@@ -21,6 +26,9 @@ def register(registry, ctx):
     )
 
     def one_click_platform_stop() -> str:
+        guard = require_not_recording(ctx, "一键关闭平台")
+        if guard:
+            return guard
         try:
             return svc.one_click_stop()
         except Exception as e:
@@ -37,6 +45,9 @@ def register(registry, ctx):
     )
 
     def prepare_platform(x: float = None, y: float = None, z: float = None) -> str:
+        guard = require_not_recording(ctx, "设置平台偏置")
+        if guard:
+            return guard
         if x is None and y is None and z is None:
             return "未指定任何偏置,请提供 x / y / z (至少一项)。"
         try:

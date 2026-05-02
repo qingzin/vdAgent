@@ -28,6 +28,9 @@ def register(registry, ctx):
     )
 
     def manage_simulation_workspace(operation: str) -> str:
+        guard = require_not_recording(ctx, "管理仿真工作区")
+        if guard:
+            return guard
         op = operation.lower().strip()
         try:
             if op in ("open_simulink", "simulink", "open"):
@@ -59,6 +62,9 @@ def register(registry, ctx):
     )
 
     def clear_simulation_cache() -> str:
+        guard = require_not_recording(ctx, "清除仿真缓存")
+        if guard:
+            return guard
         try:
             svc.clear_cache()
             return "已清除离线仿真缓存数据,方案计数器已归零。"

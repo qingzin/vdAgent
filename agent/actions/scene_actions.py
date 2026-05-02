@@ -1,6 +1,6 @@
 """场景设置 action — 通过 SceneService 操作。"""
 
-from ._helpers import fuzzy_resolve
+from ._helpers import fuzzy_resolve, require_not_recording
 
 
 def register(registry, ctx):
@@ -10,6 +10,9 @@ def register(registry, ctx):
                            map_name: str = None,
                            start_point_name: str = None,
                            confirm: bool = True) -> str:
+        guard = require_not_recording(ctx, "准备试验场景")
+        if guard:
+            return guard
         msgs = []
 
         if condition_name is not None:
@@ -103,6 +106,10 @@ def register(registry, ctx):
     )
 
     def set_road_segment(segment_name: str = None, query: bool = False) -> str:
+        if not query and segment_name is not None:
+            guard = require_not_recording(ctx, "设置路段")
+            if guard:
+                return guard
         if query or segment_name is None:
             current = svc.get_road_segment()
             names = svc.list_road_segments()

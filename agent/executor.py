@@ -253,6 +253,7 @@ class AgentExecutor(QObject):
         self._worker_thread = None
         self._worker = None
         self._is_busy = False
+        self._call_generation = 0
         self._llm_recovery_attempted = False
         self._auto_step_count = 0
         self._auto_step_max = 10
@@ -330,7 +331,21 @@ class AgentExecutor(QObject):
         """在子线程中调用 LLM,注入当前系统上下文"""
         self._is_busy = True
         self.thinking.emit(True)
-        self._busy_watchdog.start(30000)
+        self._busy_watchdog.start(65000)
+
+        # 断开旧 worker 的信号，防止看门狗超时后旧线程响应污染新流程
+        if self._worker is not None:
+            try:
+                self._worker.finished.disconnect()
+            except TypeError:
+                pass
+            try:
+                self._worker.error.disconnect()
+            except TypeError:
+                pass
+
+        self._call_generation += 1
+        generation = self._call_generation
 
         tools = self.registry.get_tools_schema()
         self._write_trace("llm_request", payload={"tool_count": len(tools)})
@@ -343,11 +358,20 @@ class AgentExecutor(QObject):
         self._worker.moveToThread(self._worker_thread)
 
         self._worker_thread.started.connect(self._worker.run)
-        self._worker.finished.connect(self._on_llm_response)
-        self._worker.error.connect(self._on_llm_error)
+
+        # 用 generation 守卫防止旧线程响应污染新流程状态
+        def on_finished(response):
+            if self._call_generation == generation:
+                self._on_llm_response(response)
+
+        def on_error(error_msg):
+            if self._call_generation == generation:
+                self._on_llm_error(error_msg)
+
+        self._worker.finished.connect(on_finished)
+        self._worker.error.connect(on_error)
         self._worker.finished.connect(self._worker_thread.quit)
         self._worker.error.connect(self._worker_thread.quit)
-        # 确保 thread 和 worker 对象在线程结束后被清理
         self._worker_thread.finished.connect(self._worker.deleteLater)
         self._worker_thread.finished.connect(self._worker_thread.deleteLater)
 
@@ -368,7 +392,8 @@ class AgentExecutor(QObject):
         """从知识库检索与当前上下文相关的条目。"""
         try:
             store = KnowledgeStore()
-            entries = store.search(limit=4)
+            keyword = self._extract_recent_keywords()
+            entries = store.search(keyword=keyword, limit=4)
             if not entries:
                 return ""
             lines = []
@@ -378,6 +403,16 @@ class AgentExecutor(QObject):
             return "\n".join(lines) if lines else ""
         except Exception:
             return ""
+
+    def _extract_recent_keywords(self) -> str:
+        """从最近用户消息中提取中文关键词用于知识检索。"""
+        user_msgs = [m.get("content", "") for m in self.history[-6:]
+                     if m.get("role") == "user"]
+        text = " ".join(user_msgs)
+        # 取最近用户的自然语言输入作为搜索关键词
+        if user_msgs:
+            return user_msgs[-1][:80]
+        return text[:80]
 
     def _get_ui(self):
         """获取 UI 引用。"""
@@ -461,10 +496,7 @@ class AgentExecutor(QObject):
 
     def _on_busy_timeout(self):
         """看门狗超时：强制重置 _is_busy，防止 agent 永久卡死。"""
-        self._is_busy = False
-        self.thinking.emit(False)
-        self._auto_step_count = 0
-        self._multi_step_active = False
+        self._stop_busy_watchdog()
         self._stop_multi_step()
         self.response_ready.emit("AI 响应超时，请重试。")
         self._drain_queue()

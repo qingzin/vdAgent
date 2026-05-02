@@ -1,10 +1,15 @@
 """视觉补偿 action — 通过 VisualService 操作。"""
 
+from ._helpers import require_not_recording
+
 
 def register(registry, ctx):
     svc = ctx.service('visual')
 
     def set_visual_profile(**kwargs) -> str:
+        guard = require_not_recording(ctx, "设置视觉补偿")
+        if guard:
+            return guard
         result = svc.set_profile(**kwargs)
         vc = result["vc"]
         vdc = result["vdc"]

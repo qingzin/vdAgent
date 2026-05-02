@@ -1,5 +1,7 @@
 """触感力反馈 action — 通过 HapticService 操作。"""
 
+from ._helpers import require_not_recording
+
 
 def register(registry, ctx):
     svc = ctx.service('haptic')
@@ -8,6 +10,10 @@ def register(registry, ctx):
                              feedback=None, saturation=None, overall=None,
                              steer_rate=None) -> str:
         mode = (mode or "get").lower().strip()
+        if mode != "get":
+            guard = require_not_recording(ctx, "调整触感参数")
+            if guard:
+                return guard
         if mode == "get":
             params = svc.get_all()
             parts = [f"摩擦增益(friction)={params.get('friction')}",

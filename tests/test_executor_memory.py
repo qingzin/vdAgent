@@ -83,7 +83,8 @@ def test_planning_action_auto_executes_without_pending_confirm(tmp_path):
     assert confirmations == []
     assert responses[-1].startswith("## 底盘任务规划")
     assert executor.history[-1]["content"] == responses[-1]
-    assert executor.recent_plan_context["plan_id"].startswith("plan_")
+    assert executor.recent_plan_context["goal"] == "单移线侧倾大"
+    assert executor._session_id is not None
     assert [t["event_type"] for t in store.query_traces(action_name="plan_chassis_task")] == [
         "llm_tool_call",
         "auto_execute_action",

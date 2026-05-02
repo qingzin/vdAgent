@@ -19,15 +19,22 @@ class PlatformService(BaseService):
         self._ui.one_click_stop()
         return "已触发平台一键关闭流程 (Disengage → Off)。"
 
+    @staticmethod
+    def _safe_float(value, default=0.0):
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            return default
+
     def set_offset(self, x=None, y=None, z=None) -> str:
         ui = self._ui
-        cur_x = float(ui.offset_x.text()) if hasattr(ui, 'offset_x') and x is None else 0.0
-        cur_y = float(ui.offset_y.text()) if hasattr(ui, 'offset_y') and y is None else 0.0
-        cur_z = float(ui.offset_z.text()) if hasattr(ui, 'offset_z') and z is None else 0.0
+        cur_x = self._safe_float(ui.offset_x.text()) if hasattr(ui, 'offset_x') and x is None else 0.0
+        cur_y = self._safe_float(ui.offset_y.text()) if hasattr(ui, 'offset_y') and y is None else 0.0
+        cur_z = self._safe_float(ui.offset_z.text()) if hasattr(ui, 'offset_z') and z is None else 0.0
 
-        nx = cur_x if x is None else float(x)
-        ny = cur_y if y is None else float(y)
-        nz = cur_z if z is None else float(z)
+        nx = cur_x if x is None else self._safe_float(x)
+        ny = cur_y if y is None else self._safe_float(y)
+        nz = cur_z if z is None else self._safe_float(z)
 
         if hasattr(ui, 'offset_x'): ui.offset_x.setText(str(nx))
         if hasattr(ui, 'offset_y'): ui.offset_y.setText(str(ny))

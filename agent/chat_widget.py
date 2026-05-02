@@ -86,6 +86,14 @@ class ChatWidget(QDockWidget):
 
         self._init_ui()
         self._connect_signals()
+        self._confirm_pending = False
+
+    def showEvent(self, event):
+        """Dock 重新显示时恢复确认对话框。"""
+        super().showEvent(event)
+        if self._confirm_pending and self.executor._pending_action is not None:
+            self.confirm_dialog.show()
+            self.confirm_dialog.raise_()
 
     def _init_ui(self):
         """初始化聊天面板 UI"""
@@ -257,12 +265,14 @@ class ChatWidget(QDockWidget):
 
     def _on_agent_response(self, text):
         """收到 Agent 文本回复"""
+        self._confirm_pending = False
         self.confirm_dialog.hide()
         self._append_agent_message(text)
         self._enable_input()
 
     def _on_confirm_request(self, name, params, summary):
         """收到确认请求"""
+        self._confirm_pending = True
         self._append_agent_message(f"我将执行以下操作：\n{summary}")
         self.confirm_dialog.set_summary(summary)
         self.confirm_dialog.show()
@@ -272,12 +282,14 @@ class ChatWidget(QDockWidget):
 
     def _on_confirm(self):
         """用户确认执行"""
+        self._confirm_pending = False
         self.confirm_dialog.hide()
         self._append_user_message(" 确认执行")
         self.executor.confirm_action()
 
     def _on_cancel(self):
         """用户取消执行"""
+        self._confirm_pending = False
         self.confirm_dialog.hide()
         self._append_user_message(" 取消")
         self.executor.cancel_action()
@@ -285,6 +297,7 @@ class ChatWidget(QDockWidget):
 
     def _on_action_done(self, result):
         """操作执行完成"""
+        self._confirm_pending = False
         self.confirm_dialog.hide()
         self._append_system_message(f"✅ {result}")
         self._enable_input()
@@ -301,6 +314,7 @@ class ChatWidget(QDockWidget):
 
     def _clear_chat(self):
         """清空聊天记录"""
+        self._confirm_pending = False
         self.chat_display.clear()
         self.executor.clear_history()
         self.confirm_dialog.hide()

@@ -40,6 +40,8 @@ class TuningService(BaseService):
 
         info = self._vehicle_info[vehicle_name]
         match = re.search(r"(.*):<(.*?)>(.*)", info)
+        if match is None:
+            return f"无法解析车型信息: {info[:80]}"
         group = match.group(2)
 
         self._carsim.GoHome()
@@ -89,7 +91,9 @@ class TuningService(BaseService):
         ui.CurrentVehicleSpringPage(page)
         info = spring_dic[spring_name]
         m = re.search(r"(.*):<(.*?)>(.*)", info)
-        group = m.group(2) if m else ""
+        if m is None:
+            return f"无法解析弹簧信息: {info[:80]}"
+        group = m.group(2)
         carsim.BlueLink(blue_link, 'Suspension: Spring', spring_name, group)
         carsim.GoHome()
         setattr(ui, name_attr, spring_name)
