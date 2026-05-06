@@ -75,10 +75,10 @@ from agent.session_store import SessionStore
 SYSTEM_PROMPT = """你是一个驾驶模拟器控制系统的智能助手。用户会用中文自然语言描述想要进行的操作,你需要调用合适的工具来完成。
 
 多步执行规则:
-- 每个工具执行后，结果会自动反馈给你，你可以继续调用下一个工具
-- 当任务完成时，直接回复文字总结（不要再调用工具）
+- 用户可能一次要求多个操作（如"改弹簧和稳定杆"），你需要依次调用所有必要工具
+- 每步执行后，系统会询问"任务是否已全部完成"——已完成则回复"完成"，否则继续
 - 如果上一步失败，分析原因并决定是否重试或调整方案
-- 最多可连续执行 10 步
+- 最多可连续执行 5 步
 
 重要规则:
 1. 仔细理解用户意图,选择最匹配的工具
@@ -256,7 +256,7 @@ class AgentExecutor(QObject):
         self._call_generation = 0
         self._llm_recovery_attempted = False
         self._auto_step_count = 0
-        self._auto_step_max = 10
+        self._auto_step_max = 5
         self._multi_step_active = False
         self._session_store = SessionStore()
         self._session_id = None
@@ -560,10 +560,8 @@ class AgentExecutor(QObject):
         })
 
         self.action_done.emit(result)
-        # 用户确认执行的操作直接结束，不自动进入多步循环
-        # 只有规划/知识类自动执行的操作才触发 LLM 继续推理
-        self._multi_step_active = False
-        self._drain_queue()
+        # 允许 LLM 继续推理以支持多参数修改，但限制步数防止无限循环
+        self._continue_or_finish(result)
 
     def cancel_action(self):
         """用户取消操作"""
@@ -731,7 +729,7 @@ class AgentExecutor(QObject):
 
         self._append_history({
             "role": "user",
-            "content": f"上一步执行结果: {result}\n请继续执行下一步，或回复'完成'结束。"
+            "content": f"操作结果: {result}\n原始任务是否已全部完成？已完成请回复'完成'；如果还有必要操作，继续调用工具。"
         })
         self._call_llm()
 

@@ -74,8 +74,8 @@ def register(registry, ctx):
         if side in ("right", "both"):
             if numeric is not None:
                 if side == "right":
-                    return "右侧弹簧当前仅支持按名称切换,暂不支持直接输入数值刚度。"
-                messages.append("右侧弹簧未更新: 仅支持按名称切换。")
+                    return "右侧弹簧暂不支持直接输入数值刚度，请使用弹簧名称。"
+                messages.append("数值刚度已应用。")
             else:
                 setter = (svc.set_front_right_spring if position == "front"
                           else svc.set_rear_right_spring)

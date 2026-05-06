@@ -237,7 +237,7 @@ def test_unmatched_high_risk_action_warns_in_confirmation_summary(tmp_path):
         tool_params={"position": "front", "spring_name": "K1"},
     ))
 
-    assert "未匹配近期计划" in summaries[-1]
+    assert "当前操作未经过规划分析" in summaries[-1]
 
 
 def test_matched_plan_action_still_requires_confirmation_without_warning(tmp_path):
