@@ -19,7 +19,8 @@ class ConfirmDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("确认操作")
         self.setWindowFlags(
-            Qt.Dialog | Qt.CustomizeWindowHint | Qt.WindowTitleHint
+            Qt.Dialog | Qt.CustomizeWindowHint | Qt.WindowTitleHint |
+            Qt.WindowStaysOnTopHint
         )
         self.setMinimumWidth(400)
         self.setMaximumWidth(600)
@@ -277,6 +278,7 @@ class ChatWidget(QDockWidget):
         self.confirm_dialog.set_summary(summary)
         self.confirm_dialog.show()
         self.confirm_dialog.raise_()
+        self.confirm_dialog.activateWindow()
         self.input_field.setEnabled(False)
         self.send_btn.setEnabled(False)
 
