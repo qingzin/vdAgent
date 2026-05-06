@@ -333,32 +333,8 @@ class AgentExecutor(QObject):
         self.thinking.emit(True)
         self._busy_watchdog.start(65000)
 
-        # 等待旧线程结束，防止 Python GC 在 C++ 线程运行中析构 QThread
-        if self._worker_thread is not None:
-            try:
-                self._worker_thread.finished.disconnect()
-            except (TypeError, RuntimeError):
-                pass
-            if self._worker_thread.isRunning():
-                self._worker_thread.quit()
-                self._worker_thread.wait(2000)
-            self._worker_thread = None
-
-        # 断开旧 worker 的信号，防止看门狗超时后旧线程响应污染新流程
-        if self._worker is not None:
-            try:
-                self._worker.finished.disconnect()
-            except (TypeError, RuntimeError):
-                pass
-            try:
-                self._worker.error.disconnect()
-            except (TypeError, RuntimeError):
-                pass
-            try:
-                self._worker.deleteLater()
-            except RuntimeError:
-                pass
-            self._worker = None
+        self._discard_worker_thread()
+        self._discard_worker()
 
         self._call_generation += 1
         generation = self._call_generation
@@ -620,27 +596,60 @@ class AgentExecutor(QObject):
     def shutdown(self):
         """应用关闭时安全清理线程和定时器。"""
         self._stop_busy_watchdog()
-        if self._worker_thread is not None:
-            try:
-                self._worker_thread.finished.disconnect()
-            except (TypeError, RuntimeError):
-                pass
-            if self._worker_thread.isRunning():
-                self._worker_thread.quit()
-                self._worker_thread.wait(2000)
-            self._worker_thread = None
-        if self._worker is not None:
-            try:
-                self._worker.finished.disconnect()
-            except (TypeError, RuntimeError):
-                pass
-            try:
-                self._worker.error.disconnect()
-            except (TypeError, RuntimeError):
-                pass
-            self._worker = None
+        self._discard_worker_thread()
+        self._discard_worker(delete_later=False)
         self._busy_watchdog.stop()
         self._busy_watchdog.deleteLater()
+
+    @staticmethod
+    def _safe_disconnect(signal):
+        try:
+            signal.disconnect()
+        except (TypeError, RuntimeError):
+            pass
+
+    def _discard_worker_thread(self):
+        """Drop the previous QThread, tolerating wrappers already deleted by Qt."""
+        thread = self._worker_thread
+        self._worker_thread = None
+        if thread is None:
+            return
+
+        try:
+            self._safe_disconnect(thread.finished)
+        except RuntimeError:
+            return
+
+        try:
+            running = thread.isRunning()
+        except RuntimeError:
+            return
+
+        if running:
+            try:
+                thread.quit()
+                thread.wait(2000)
+            except RuntimeError:
+                return
+
+    def _discard_worker(self, delete_later: bool = True):
+        """Drop the previous worker, tolerating wrappers already deleted by Qt."""
+        worker = self._worker
+        self._worker = None
+        if worker is None:
+            return
+
+        try:
+            self._safe_disconnect(worker.finished)
+            self._safe_disconnect(worker.error)
+        except RuntimeError:
+            return
+
+        if delete_later:
+            try:
+                worker.deleteLater()
+            except RuntimeError:
+                pass
 
     def _stop_multi_step(self):
         self._auto_step_count = 0

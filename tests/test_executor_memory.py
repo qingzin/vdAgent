@@ -399,3 +399,71 @@ def test_busy_timeout_resets_state_and_emits_fallback():
     assert executor._multi_step_active is False
     assert executor._auto_step_count == 0
     assert responses[-1] == "AI 响应超时，请重试。"
+
+
+def test_call_llm_recovers_when_previous_qthread_wrapper_was_deleted():
+    class FakeSignal:
+        def __init__(self):
+            self.slots = []
+
+        def connect(self, slot):
+            self.slots.append(slot)
+
+        def disconnect(self):
+            self.slots.clear()
+
+    class DeletedThread:
+        finished = FakeSignal()
+
+        def isRunning(self):
+            raise RuntimeError("wrapped C/C++ object of type QThread has been deleted")
+
+    class FakeThread:
+        def __init__(self):
+            self.started = FakeSignal()
+            self.finished = FakeSignal()
+            self.started_ok = False
+
+        def isRunning(self):
+            return False
+
+        def quit(self):
+            pass
+
+        def wait(self, timeout):
+            pass
+
+        def deleteLater(self):
+            pass
+
+        def start(self):
+            self.started_ok = True
+
+    class FakeWorker:
+        def __init__(self, *args, **kwargs):
+            self.finished = FakeSignal()
+            self.error = FakeSignal()
+
+        def moveToThread(self, thread):
+            self.thread = thread
+
+        def run(self):
+            pass
+
+        def deleteLater(self):
+            pass
+
+    executor = AgentExecutor(
+        ActionRegistry(),
+        llm_client=object(),
+        memory_store=NullAgentMemoryStore("test"),
+    )
+    executor._worker_thread = DeletedThread()
+    new_thread = FakeThread()
+
+    with patch("agent.executor.QThread", return_value=new_thread), \
+            patch("agent.executor.AgentWorker", FakeWorker):
+        executor._call_llm()
+
+    assert executor._worker_thread is new_thread
+    assert new_thread.started_ok is True

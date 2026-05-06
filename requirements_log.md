@@ -26,3 +26,11 @@ Conflict/reasonableness check: this is scoped to executor/LLM recovery behavior 
 - Keep the work to analysis and requirement logging unless a separate fix is requested.
 
 Conflict/reasonableness check: this is a read-only audit request except for the required requirements log update. It does not conflict with prior scoped implementation requests and does not require dependency, public API, schema, or governance changes.
+
+## 2026-05-06 - Confirmation flow QThread deletion crash
+
+- Fix the crash after confirming a compound agent action when the previous worker thread wrapper has already been deleted by Qt.
+- Preserve the existing confirmation and multi-step execution behavior while making worker/thread cleanup idempotent.
+- Add regression coverage for retrying `_call_llm` after the stored QThread wrapper raises `RuntimeError` on lifecycle access.
+
+Conflict/reasonableness check: this is a localized executor lifecycle fix and test update. It does not require a new dependency, public API change, database schema change, governance policy change, or feature deletion.
