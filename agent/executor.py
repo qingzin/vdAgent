@@ -337,12 +337,13 @@ class AgentExecutor(QObject):
         if self._worker is not None:
             try:
                 self._worker.finished.disconnect()
-            except TypeError:
+            except (TypeError, RuntimeError):
                 pass
             try:
                 self._worker.error.disconnect()
-            except TypeError:
+            except (TypeError, RuntimeError):
                 pass
+            self._worker = None
 
         self._call_generation += 1
         generation = self._call_generation
