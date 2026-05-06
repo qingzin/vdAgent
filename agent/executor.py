@@ -262,7 +262,7 @@ class AgentExecutor(QObject):
         self._session_id = None
         from collections import deque
         self._message_queue = deque(maxlen=20)
-        self._busy_watchdog = QTimer()
+        self._busy_watchdog = QTimer(self)
         self._busy_watchdog.setSingleShot(True)
         self._busy_watchdog.timeout.connect(self._on_busy_timeout)
 
@@ -616,6 +616,31 @@ class AgentExecutor(QObject):
         self._auto_step_count = 0
         self._multi_step_active = False
         self._write_trace("clear_history", "Conversation history cleared")
+
+    def shutdown(self):
+        """应用关闭时安全清理线程和定时器。"""
+        self._stop_busy_watchdog()
+        if self._worker_thread is not None:
+            try:
+                self._worker_thread.finished.disconnect()
+            except (TypeError, RuntimeError):
+                pass
+            if self._worker_thread.isRunning():
+                self._worker_thread.quit()
+                self._worker_thread.wait(2000)
+            self._worker_thread = None
+        if self._worker is not None:
+            try:
+                self._worker.finished.disconnect()
+            except (TypeError, RuntimeError):
+                pass
+            try:
+                self._worker.error.disconnect()
+            except (TypeError, RuntimeError):
+                pass
+            self._worker = None
+        self._busy_watchdog.stop()
+        self._busy_watchdog.deleteLater()
 
     def _stop_multi_step(self):
         self._auto_step_count = 0

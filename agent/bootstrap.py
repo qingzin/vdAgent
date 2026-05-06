@@ -104,4 +104,7 @@ def attach_agent(main_window, llm_url: str = "http://127.0.0.1:8080"):
     if restore_text:
         chat_dock.append_system_message(restore_text)
 
+    # 9. 主窗口关闭时安全清理线程和定时器
+    main_window.destroyed.connect(lambda _: executor.shutdown())
+
     print("[Agent] AI 助手已加载完成")
