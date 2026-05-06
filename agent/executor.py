@@ -333,6 +333,17 @@ class AgentExecutor(QObject):
         self.thinking.emit(True)
         self._busy_watchdog.start(65000)
 
+        # 等待旧线程结束，防止 Python GC 在 C++ 线程运行中析构 QThread
+        if self._worker_thread is not None:
+            try:
+                self._worker_thread.finished.disconnect()
+            except (TypeError, RuntimeError):
+                pass
+            if self._worker_thread.isRunning():
+                self._worker_thread.quit()
+                self._worker_thread.wait(2000)
+            self._worker_thread = None
+
         # 断开旧 worker 的信号，防止看门狗超时后旧线程响应污染新流程
         if self._worker is not None:
             try:
@@ -342,6 +353,10 @@ class AgentExecutor(QObject):
             try:
                 self._worker.error.disconnect()
             except (TypeError, RuntimeError):
+                pass
+            try:
+                self._worker.deleteLater()
+            except RuntimeError:
                 pass
             self._worker = None
 
