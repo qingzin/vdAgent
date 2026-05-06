@@ -60,7 +60,7 @@ class LLMClient:
             "model": "qwen2.5-coder",
             "messages": full_messages,
             "temperature": temperature,
-            "max_tokens": 1024,
+            "max_tokens": 512,
         }
 
         if tools:

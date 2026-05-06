@@ -26,12 +26,12 @@ def register(registry, ctx):
         current_state = _build_context_snapshot(ui)
         knowledge = KnowledgeStore().search_for_context(
             keyword=complaint or objective or "",
-            limit=4,
+            limit=2,
         )
         experiences_list = relevant_experience_seeds(
             condition_name=condition_name,
             keyword=complaint or objective,
-            limit=3,
+            limit=2,
         )
         exp_text = ""
         if experiences_list:
