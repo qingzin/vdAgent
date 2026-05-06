@@ -6,10 +6,111 @@ Chat Widget - 嵌入 PyQt 的聊天面板
 from PyQt5.QtWidgets import (
     QDockWidget, QWidget, QVBoxLayout, QHBoxLayout,
     QTextEdit, QLineEdit, QPushButton, QLabel, QFrame,
-    QMessageBox, QSizePolicy, QDialog
+    QMessageBox, QSizePolicy, QDialog, QRadioButton,
+    QGroupBox, QFormLayout
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer
 from PyQt5.QtGui import QFont, QColor, QTextCursor
+
+from agent.llm_config import LLMConfig
+
+
+class LLMSettingsDialog(QDialog):
+    """LLM 配置设置对话框"""
+
+    def __init__(self, config: LLMConfig, parent=None):
+        super().__init__(parent)
+        self.config = config
+        self.setWindowTitle("LLM 设置")
+        self.setWindowFlags(
+            Qt.Dialog | Qt.CustomizeWindowHint |
+            Qt.WindowTitleHint | Qt.WindowCloseButtonHint
+        )
+        self.setMinimumWidth(420)
+
+        layout = QVBoxLayout()
+        layout.setSpacing(12)
+
+        # 模式选择
+        mode_group = QGroupBox("连接模式")
+        mode_layout = QHBoxLayout()
+        self.local_radio = QRadioButton("本地 LLM")
+        self.remote_radio = QRadioButton("远程 API")
+        self.local_radio.toggled.connect(self._on_mode_changed)
+        mode_layout.addWidget(self.local_radio)
+        mode_layout.addWidget(self.remote_radio)
+        mode_layout.addStretch()
+        mode_group.setLayout(mode_layout)
+        layout.addWidget(mode_group)
+
+        # 本地设置
+        local_group = QGroupBox("本地设置")
+        local_form = QFormLayout()
+        self.local_url_edit = QLineEdit()
+        local_form.addRow("服务地址:", self.local_url_edit)
+        local_group.setLayout(local_form)
+        layout.addWidget(local_group)
+
+        # 远程设置
+        remote_group = QGroupBox("远程 API 设置")
+        remote_form = QFormLayout()
+        self.remote_url_edit = QLineEdit()
+        self.remote_key_edit = QLineEdit()
+        self.remote_key_edit.setEchoMode(QLineEdit.Password)
+        self.remote_model_edit = QLineEdit()
+        remote_form.addRow("API 地址:", self.remote_url_edit)
+        remote_form.addRow("API Key:", self.remote_key_edit)
+        remote_form.addRow("模型名称:", self.remote_model_edit)
+        remote_group.setLayout(remote_form)
+        layout.addWidget(remote_group)
+
+        # 按钮
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        save_btn = QPushButton("保存")
+        save_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #4a90d9; color: white;
+                border: none; border-radius: 4px;
+                padding: 8px 20px; font-weight: bold;
+            }
+            QPushButton:hover { background-color: #357abd; }
+        """)
+        save_btn.clicked.connect(self._on_save)
+        cancel_btn = QPushButton("取消")
+        cancel_btn.clicked.connect(self.reject)
+        btn_layout.addWidget(save_btn)
+        btn_layout.addWidget(cancel_btn)
+        layout.addLayout(btn_layout)
+
+        self.setLayout(layout)
+        self._load_config()
+
+    def _load_config(self):
+        if self.config.is_local:
+            self.local_radio.setChecked(True)
+        else:
+            self.remote_radio.setChecked(True)
+        self.local_url_edit.setText(self.config.local_url)
+        self.remote_url_edit.setText(self.config.remote_url)
+        self.remote_key_edit.setText(self.config.remote_api_key)
+        self.remote_model_edit.setText(self.config.remote_model)
+
+    def _on_mode_changed(self):
+        is_local = self.local_radio.isChecked()
+        self.local_url_edit.setEnabled(is_local)
+        self.remote_url_edit.setEnabled(not is_local)
+        self.remote_key_edit.setEnabled(not is_local)
+        self.remote_model_edit.setEnabled(not is_local)
+
+    def _on_save(self):
+        self.config.mode = "local" if self.local_radio.isChecked() else "remote"
+        self.config.local_url = self.local_url_edit.text().strip()
+        self.config.remote_url = self.remote_url_edit.text().strip()
+        self.config.remote_api_key = self.remote_key_edit.text().strip()
+        self.config.remote_model = self.remote_model_edit.text().strip()
+        self.config.save()
+        self.accept()
 
 
 class ConfirmDialog(QDialog):
@@ -119,6 +220,22 @@ class ChatWidget(QDockWidget):
         header.addWidget(self.status_dot)
 
         header.addStretch()
+
+        # LLM 设置按钮
+        settings_btn = QPushButton("设置")
+        settings_btn.setFixedWidth(50)
+        settings_btn.setStyleSheet("""
+            QPushButton {
+                background: #f0f0f0;
+                border: 1px solid #ccc;
+                border-radius: 3px;
+                padding: 2px 4px;
+                font-size: 12px;
+            }
+            QPushButton:hover { background: #e0e0e0; }
+        """)
+        settings_btn.clicked.connect(self._open_settings)
+        header.addWidget(settings_btn)
 
         # 清空按钮
         clear_btn = QPushButton("清空")
@@ -365,7 +482,32 @@ class ChatWidget(QDockWidget):
         """供外部调用的系统消息追加方法。"""
         self._append_system_message(text)
 
+    def _open_settings(self):
+        """打开 LLM 设置对话框。"""
+        config = self.executor.llm_client.config
+        dialog = LLMSettingsDialog(config, self.window())
+        if dialog.exec_() == QDialog.Accepted:
+            mode_text = "本地 LLM" if config.is_local else "远程 API"
+            self._append_system_message(f"LLM 模式已切换为: {mode_text}")
+            # 立即检查新连接状态
+            QTimer.singleShot(500, lambda: self.update_connection_status(
+                self.executor.llm_client is not None and
+                self.executor.llm_client.check_connection()
+            ))
+
     def update_connection_status(self, connected: bool):
+        """更新 LLM 连接状态指示"""
+        config = self.executor.llm_client.config if self.executor.llm_client else None
+        if config and not config.is_local:
+            self.status_dot.setStyleSheet("color: #ff9800; font-size: 14px;")
+            self.status_dot.setToolTip(f"远程 API: {config.remote_model}")
+            return
+        if connected:
+            self.status_dot.setStyleSheet("color: #28a745; font-size: 14px;")
+            self.status_dot.setToolTip("LLM 已连接")
+        else:
+            self.status_dot.setStyleSheet("color: #dc3545; font-size: 14px;")
+            self.status_dot.setToolTip("LLM 未连接")
         """更新 LLM 连接状态指示"""
         if connected:
             self.status_dot.setStyleSheet("color: #28a745; font-size: 14px;")

@@ -14,6 +14,7 @@ from PyQt5.QtWidgets import QPushButton
 
 from agent.registry import ActionRegistry
 from agent.llm_client import LLMClient
+from agent.llm_config import LLMConfig
 from agent.executor import AgentExecutor
 from agent.chat_widget import ChatWidget
 from agent.bridge import register_actions
@@ -30,16 +31,13 @@ from agent.services.metadata_service import MetadataService
 from agent.services.analysis_service import AnalysisService
 
 
-def attach_agent(main_window, llm_url: str = "http://127.0.0.1:8080"):
+def attach_agent(main_window, llm_url: str = None):
     """
     将 Agent 系统挂载到主窗口。
 
     Args:
         main_window: SimulatorUI 实例
-        llm_url: llama-server 地址
-
-    注意签名只有 main_window 一个必需参数, 以后永远不会增加。
-    依赖通过 AgentContext 从 main_window 所在模块自动定位。
+        llm_url: (已弃用) llama-server 地址，请使用 LLM 设置面板配置
     """
 
     # 1. 构造 context, 自动定位 main.py 模块
@@ -57,9 +55,13 @@ def attach_agent(main_window, llm_url: str = "http://127.0.0.1:8080"):
     ctx.register_service('metadata', MetadataService(ctx))
     ctx.register_service('analysis', AnalysisService(ctx))
 
-    # 3. 创建核心组件
+    # 3. 加载 LLM 配置（支持本地/远程切换，持久化到 agent_data/llm_config.json）
+    config = LLMConfig()
+    if llm_url:
+        config.local_url = llm_url
+        config.mode = "local"
     registry = ActionRegistry()
-    llm_client = LLMClient(base_url=llm_url)
+    llm_client = LLMClient(config=config)
     executor = AgentExecutor(registry, llm_client, ctx=ctx)
     ctx.llm_client = llm_client  # 供 planning/knowledge action 调用 LLM
 

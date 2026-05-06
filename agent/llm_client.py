@@ -1,12 +1,14 @@
 """
-LLM Client - 与 llama-server 的 OpenAI 兼容 API 通信
-支持 function calling，带 fallback JSON 解析
+LLM Client - 支持本地 llama-server 和远程 API 两种模式
+兼容 OpenAI API 格式，支持 function calling，带 fallback JSON 解析
 """
 
 import json
 import requests
 import re
 from typing import Optional
+
+from agent.llm_config import LLMConfig
 
 
 class LLMResponse:
@@ -21,66 +23,71 @@ class LLMResponse:
 
 
 class LLMClient:
-    def __init__(self, base_url: str = "http://127.0.0.1:8080"):
-        """
-        Args:
-            base_url: llama-server 的地址，默认 http://127.0.0.1:8080
-        """
-        self.base_url = base_url.rstrip("/")
-        self.api_url = f"{self.base_url}/v1/chat/completions"
+    """支持本地和远程两种模式的 LLM 客户端。"""
+
+    def __init__(self, config: LLMConfig = None):
+        self.config = config or LLMConfig()
 
     def check_connection(self) -> bool:
-        """检查 llama-server 是否可用"""
-        try:
-            resp = requests.get(f"{self.base_url}/health", timeout=3)
-            return resp.status_code == 200
-        except Exception:
-            return False
+        """检查 LLM 服务是否可用"""
+        if self.config.is_local:
+            try:
+                resp = requests.get(f"{self.config.local_url}/health", timeout=3)
+                return resp.status_code == 200
+            except Exception:
+                return False
+        else:
+            # 远程 API 无法简单检查，假设可用
+            return True
 
     def chat(self, messages: list, tools: list = None,
              system: str = None, temperature: float = 0.3) -> LLMResponse:
         """
-        发送聊天请求
-
-        Args:
-            messages: 对话历史
-            tools: function calling 的 tools 列表
-            system: 系统提示词
-            temperature: 采样温度
-
-        Returns:
-            LLMResponse 对象
+        发送聊天请求。根据 config.mode 选择本地或远程 API。
         """
         full_messages = []
         if system:
             full_messages.append({"role": "system", "content": system})
         full_messages.extend(messages)
 
-        payload = {
-            "model": "qwen2.5-coder",
-            "messages": full_messages,
-            "temperature": temperature,
-            "max_tokens": 512,
-        }
-
-        if tools:
-            payload["tools"] = tools
-            # Qwen2.5-Coder 在 required 模式下 tool call 更可靠
-            payload["tool_choice"] = "auto"
+        if self.config.is_local:
+            api_url = f"{self.config.local_url}/v1/chat/completions"
+            headers = {"Content-Type": "application/json"}
+            model = "qwen2.5-coder"
+            payload = {
+                "model": model,
+                "messages": full_messages,
+                "temperature": temperature,
+                "max_tokens": 512,
+            }
+            if tools:
+                payload["tools"] = tools
+                payload["tool_choice"] = "auto"
+        else:
+            api_url = self.config.remote_url
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.config.remote_api_key}",
+            }
+            model = self.config.remote_model
+            payload = {
+                "model": model,
+                "messages": full_messages,
+                "temperature": temperature,
+                "max_tokens": 512,
+            }
+            if tools:
+                payload["tools"] = tools
+                payload["tool_choice"] = "auto"
 
         try:
-            resp = requests.post(
-                self.api_url,
-                json=payload,
-                timeout=60,
-                headers={"Content-Type": "application/json"}
-            )
+            resp = requests.post(api_url, json=payload, timeout=60, headers=headers)
             resp.raise_for_status()
             data = resp.json()
             return self._parse_response(data)
         except requests.exceptions.ConnectionError:
             result = LLMResponse()
-            result.text = "无法连接到 LLM 服务，请确认 llama-server 已启动。"
+            result.text = "无法连接到 LLM 服务，请确认服务已启动。"
             return result
         except requests.exceptions.Timeout:
             result = LLMResponse()
