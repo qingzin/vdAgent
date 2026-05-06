@@ -34,3 +34,18 @@ Conflict/reasonableness check: this is a read-only audit request except for the 
 - Add regression coverage for retrying `_call_llm` after the stored QThread wrapper raises `RuntimeError` on lifecycle access.
 
 Conflict/reasonableness check: this is a localized executor lifecycle fix and test update. It does not require a new dependency, public API change, database schema change, governance policy change, or feature deletion.
+
+## 2026-05-06 - Repeated confirmation dialog visibility
+
+- Fix the issue where the confirmation dialog does not appear on the third confirmed operation.
+- Keep the existing non-modal confirmation flow and multi-step execution behavior.
+- Avoid reusing a hidden Qt dialog instance across repeated confirmations if that instance can become invisible or stale.
+
+Conflict/reasonableness check: this is scoped to the chat UI confirmation dialog lifecycle. It does not require a new dependency, public API change, database schema change, governance policy change, or feature deletion.
+
+## 2026-05-06 - Dependency installation expectation
+
+- When a dependency already declared by the project is missing from the local environment, install it directly and continue validation instead of skipping or substituting another approach.
+- Keep the existing confirmation rule for adding a new third-party dependency that is not already declared by the project.
+
+Conflict/reasonableness check: this refines the workflow for environment setup. It is compatible with the existing rule to stop before introducing new undeclared third-party dependencies.

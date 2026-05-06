@@ -356,10 +356,6 @@ class ChatWidget(QDockWidget):
         self.input_field.returnPressed.connect(self._on_send)
         self.send_btn.clicked.connect(self._on_send)
 
-        # 确认/取消
-        self.confirm_btn.clicked.connect(self._on_confirm)
-        self.cancel_btn.clicked.connect(self._on_cancel)
-
         # Agent 信号
         self.executor.response_ready.connect(self._on_agent_response)
         self.executor.confirm_request.connect(self._on_confirm_request)
@@ -392,6 +388,7 @@ class ChatWidget(QDockWidget):
         """收到确认请求"""
         self._confirm_pending = True
         self._append_agent_message(f"我将执行以下操作：\n{summary}")
+        self._recreate_confirm_dialog()
         self.confirm_dialog.set_summary(summary)
         self.confirm_dialog.show()
         self.confirm_dialog.raise_()
@@ -439,6 +436,22 @@ class ChatWidget(QDockWidget):
         self.confirm_dialog.hide()
         self._enable_input()
         self._append_system_message("对话已清空。请输入新的指令。")
+
+    def _recreate_confirm_dialog(self):
+        """Create a fresh dialog for each request to avoid stale hidden Qt windows."""
+        old_dialog = getattr(self, "confirm_dialog", None)
+        if old_dialog is not None:
+            try:
+                old_dialog.hide()
+                old_dialog.deleteLater()
+            except RuntimeError:
+                pass
+
+        self.confirm_dialog = ConfirmDialog(self)
+        self.confirm_btn = self.confirm_dialog.confirm_btn
+        self.cancel_btn = self.confirm_dialog.cancel_btn
+        self.confirm_btn.clicked.connect(self._on_confirm)
+        self.cancel_btn.clicked.connect(self._on_cancel)
 
     # --- 消息渲染 ---
 
