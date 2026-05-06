@@ -560,7 +560,10 @@ class AgentExecutor(QObject):
         })
 
         self.action_done.emit(result)
-        self._continue_or_finish(result)
+        # 用户确认执行的操作直接结束，不自动进入多步循环
+        # 只有规划/知识类自动执行的操作才触发 LLM 继续推理
+        self._multi_step_active = False
+        self._drain_queue()
 
     def cancel_action(self):
         """用户取消操作"""
