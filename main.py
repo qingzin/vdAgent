@@ -4440,7 +4440,7 @@ class SimulatorUI(QMainWindow):
             self.tab_bump.source_pane.fm.set_base_path(input_dir)
             self.tab_bump.source_pane._set_all(True)
             if not self.tab_bump.btn_run.isEnabled():
-                QMessageBox.information(self, 'False',f"[{self.task_name}] 请检查数据sheet")
+                QMessageBox.information(self, 'False', "请检查数据sheet")
                 return
             self.tab_bump._run()
 

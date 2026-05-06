@@ -739,7 +739,7 @@ class AgentExecutor(QObject):
         summary = self.registry.format_action_summary(action_name, params)
         if self._requires_confirmation_warning(action_name):
             if not self._action_matches_recent_plan(action_name):
-                warning = "未匹配近期计划，建议先规划/重新确认。"
+                warning = "当前操作未经过规划分析，建议先让我分析问题再执行。"
                 summary = f"{warning}\n{summary}"
         return summary
 

@@ -18,7 +18,7 @@ def register(registry, ctx):
         vehicle_dic = ctx.mod('vehicleInfoDic', {})
         resolved, err = fuzzy_resolve(vehicle_name, list(vehicle_dic.keys()))
         if err:
-            return err + f" 可用车型示例: {list(vehicle_dic.keys())[:5]}"
+            return err + f" 可用车型: {list(vehicle_dic.keys())}"
 
         svc.select_vehicle(resolved)
         return f"已切换到车型: {resolved}"
