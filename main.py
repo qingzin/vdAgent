@@ -5652,7 +5652,7 @@ class SimulatorUI(QMainWindow):
         self._show_corner_message("前轴弹簧修改完成")
 
     def OnRearSpringTextChanged(self):
-        self.CurrentVehicleSpringPage(1)
+        self.CurrentVehicleSpringPage(2)
         carsim.Yellow('*KSPRING_L', self.rearSpringEditText.text())
         self.rearSpringName = self.rearSpringEditText.text()
         # QMessageBox.information(self,'true','修改完成')
