@@ -19,6 +19,7 @@ class LLMResponse:
         self.has_tool_call: bool = False
         self.tool_name: Optional[str] = None
         self.tool_params: Optional[dict] = None
+        self.tool_calls: list[dict] = []
         self.raw: Optional[dict] = None
 
 
@@ -109,16 +110,25 @@ class LLMClient:
 
             # 情况 1：标准 tool_calls 格式
             if "tool_calls" in message and message["tool_calls"]:
-                tc = message["tool_calls"][0]
-                if isinstance(tc, dict):
+                for tc in message["tool_calls"]:
+                    if not isinstance(tc, dict):
+                        continue
                     func = tc.get("function", tc)
-                    result.has_tool_call = True
-                    result.tool_name = func.get("name", "")
+                    name = func.get("name", "")
                     args = func.get("arguments", "{}")
                     if isinstance(args, str):
-                        result.tool_params = json.loads(args)
+                        parsed_args = json.loads(args)
                     else:
-                        result.tool_params = args
+                        parsed_args = args
+                    result.tool_calls.append({
+                        "name": name,
+                        "arguments": parsed_args,
+                    })
+                if result.tool_calls:
+                    first = result.tool_calls[0]
+                    result.has_tool_call = True
+                    result.tool_name = first["name"]
+                    result.tool_params = first["arguments"]
                     return result
 
             # 情况 2：模型把 tool call 输出为纯文本（Qwen2.5-Coder 的已知问题）
@@ -126,6 +136,7 @@ class LLMClient:
             if content:
                 parsed = self._try_parse_tool_call_from_text(content)
                 if parsed:
+                    result.tool_calls.append(parsed)
                     result.has_tool_call = True
                     result.tool_name = parsed["name"]
                     result.tool_params = parsed["arguments"]

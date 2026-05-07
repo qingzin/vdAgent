@@ -15,7 +15,8 @@ from agent.registry import ActionRegistry
 
 
 class FakeLLMResponse:
-    def __init__(self, tool_name=None, tool_params=None, text=None):
+    def __init__(self, tool_name=None, tool_params=None, text=None, tool_calls=None):
+        self.tool_calls = tool_calls or []
         self.has_tool_call = tool_name is not None
         self.tool_name = tool_name
         self.tool_params = tool_params or {}
@@ -227,7 +228,7 @@ def test_readonly_query_returns_tool_result_without_llm_continuation(tmp_path):
     assert executor.state == ExecutorState.IDLE
 
 
-def test_confirmed_side_effect_actions_continue_step_by_step(tmp_path):
+def test_action_plan_executes_confirmations_without_llm_continuation(tmp_path):
     registry = ActionRegistry()
     for action_name in ("prepare_platform", "prepare_test_scene", "set_antiroll_bar"):
         registry.register(
@@ -252,14 +253,21 @@ def test_confirmed_side_effect_actions_continue_step_by_step(tmp_path):
             emitted.append((cid, name)),
         )
     )
-    llm_responses = [
-        FakeLLMResponse("prepare_platform", {"x": 1, "y": 1, "z": 1}),
-        FakeLLMResponse("prepare_test_scene", {"map_name": "性能广场"}),
-        FakeLLMResponse("set_antiroll_bar", {"position": "front", "antiroll_name": "1150"}),
-        FakeLLMResponse(text="完成"),
-    ]
+    plan = {
+        "steps": [
+            {"action_name": "prepare_platform", "params": {"x": 1, "y": 1, "z": 1}},
+            {"action_name": "prepare_test_scene", "params": {"map_name": "性能广场"}},
+            {
+                "action_name": "set_antiroll_bar",
+                "params": {"position": "front", "antiroll_name": "1150"},
+            },
+        ]
+    }
+    llm_responses = [FakeLLMResponse("submit_action_plan", plan)]
+    llm_calls = []
 
     def fake_call_llm():
+        llm_calls.append(list(executor.history))
         executor._on_llm_response(llm_responses.pop(0))
 
     executor._call_llm = fake_call_llm
@@ -274,12 +282,165 @@ def test_confirmed_side_effect_actions_continue_step_by_step(tmp_path):
     assert responses[-1] == "完成"
     assert executor.state == ExecutorState.IDLE
     assert llm_responses == []
+    assert len(llm_calls) == 1
     assert [name for _cid, name in emitted] == [
         "prepare_platform",
         "prepare_test_scene",
         "set_antiroll_bar",
     ]
     assert len({cid for cid, _name in emitted}) == 3
+
+
+def test_multiple_llm_tool_calls_are_treated_as_action_plan(tmp_path):
+    registry = ActionRegistry()
+    for action_name in ("prepare_platform", "set_antiroll_bar"):
+        registry.register(
+            name=action_name,
+            description=action_name,
+            params_schema={"type": "object", "properties": {}, "required": []},
+            callback=lambda **kwargs: f"ok {kwargs}",
+            category="test",
+            risk_level="medium",
+            exposed=True,
+        )
+    executor = AgentExecutor(
+        registry,
+        llm_client=None,
+        memory_store=AgentMemoryStore(base_dir=str(tmp_path)),
+    )
+    confirmations = []
+    executor.confirm_request.connect(lambda cid, name, params, summary: confirmations.append((cid, name)))
+
+    executor._on_llm_response(FakeLLMResponse(tool_calls=[
+        {"name": "prepare_platform", "arguments": {"x": 1}},
+        {"name": "set_antiroll_bar", "arguments": {"position": "front", "antiroll_name": "1150"}},
+    ]))
+    executor.confirm_action(confirmations.pop(0)[0])
+
+    assert [name for _cid, name in confirmations] == ["set_antiroll_bar"]
+    assert executor.state == ExecutorState.WAITING_CONFIRMATION
+
+
+def test_action_plan_cancel_clears_remaining_queue(tmp_path):
+    registry = ActionRegistry()
+    for action_name in ("prepare_platform", "prepare_test_scene"):
+        registry.register(
+            name=action_name,
+            description=action_name,
+            params_schema={"type": "object", "properties": {}, "required": []},
+            callback=lambda **kwargs: f"ok {kwargs}",
+            category="test",
+            risk_level="medium",
+            exposed=True,
+        )
+    executor = AgentExecutor(
+        registry,
+        llm_client=None,
+        memory_store=AgentMemoryStore(base_dir=str(tmp_path)),
+    )
+    confirmations = []
+    responses = []
+    executor.confirm_request.connect(lambda cid, name, params, summary: confirmations.append((cid, name)))
+    executor.response_ready.connect(responses.append)
+
+    executor._on_llm_response(FakeLLMResponse("submit_action_plan", {
+        "steps": [
+            {"action_name": "prepare_platform", "params": {"x": 1}},
+            {"action_name": "prepare_test_scene", "params": {"map_name": "性能广场"}},
+        ]
+    }))
+    executor.cancel_action(confirmations[0][0])
+
+    assert responses[-1] == "操作已取消。"
+    assert executor._pending_action is None
+    assert executor._pending_plan_steps == []
+    assert executor.state == ExecutorState.IDLE
+
+
+def test_stale_confirmation_does_not_break_action_plan(tmp_path):
+    registry = ActionRegistry()
+    for action_name in ("prepare_platform", "prepare_test_scene"):
+        registry.register(
+            name=action_name,
+            description=action_name,
+            params_schema={"type": "object", "properties": {}, "required": []},
+            callback=lambda **kwargs: f"ok {kwargs}",
+            category="test",
+            risk_level="medium",
+            exposed=True,
+        )
+    executor = AgentExecutor(
+        registry,
+        llm_client=None,
+        memory_store=AgentMemoryStore(base_dir=str(tmp_path)),
+    )
+    confirmations = []
+    action_results = []
+    executor.confirm_request.connect(lambda cid, name, params, summary: confirmations.append((cid, name)))
+    executor.action_done.connect(action_results.append)
+    executor._on_llm_response(FakeLLMResponse("submit_action_plan", {
+        "steps": [
+            {"action_name": "prepare_platform", "params": {"x": 1}},
+            {"action_name": "prepare_test_scene", "params": {"map_name": "性能广场"}},
+        ]
+    }))
+
+    executor.confirm_action("stale-id")
+
+    assert action_results == []
+    assert confirmations[0][1] == "prepare_platform"
+    assert executor._pending_plan_steps[0].action_name == "prepare_test_scene"
+    assert executor.state == ExecutorState.WAITING_CONFIRMATION
+
+
+def test_pseudo_confirmation_text_is_converted_to_confirm_request(tmp_path):
+    registry = ActionRegistry()
+    registry.register(
+        name="set_antiroll_bar",
+        description="统一设置前/后防倾杆(稳定杆)或滚转刚度相关数据集。",
+        params_schema={"type": "object", "properties": {}, "required": []},
+        callback=lambda position, antiroll_name: "ok",
+        category="tuning",
+        risk_level="high",
+        exposed=True,
+    )
+    executor = AgentExecutor(
+        registry,
+        llm_client=None,
+        memory_store=AgentMemoryStore(base_dir=str(tmp_path)),
+    )
+    confirmations = []
+    executor.confirm_request.connect(lambda cid, name, params, summary: confirmations.append((name, params)))
+
+    executor._on_llm_response(FakeLLMResponse(text=(
+        "我将执行以下操作:\n"
+        "【统一设置前/后防倾杆(稳定杆)或滚转刚度相关数据集。】\n"
+        "参数：position=front, antiroll_name=1150\n"
+        "请确认是否执行。"
+    )))
+
+    assert confirmations == [("set_antiroll_bar", {
+        "position": "front",
+        "antiroll_name": "1150",
+    })]
+    assert executor.state == ExecutorState.WAITING_CONFIRMATION
+
+
+def test_unparseable_pseudo_confirmation_returns_protocol_error(tmp_path):
+    executor = AgentExecutor(
+        ActionRegistry(),
+        llm_client=None,
+        memory_store=AgentMemoryStore(base_dir=str(tmp_path)),
+    )
+    responses = []
+    executor.response_ready.connect(responses.append)
+
+    executor._on_llm_response(FakeLLMResponse(text=(
+        "我将执行以下操作:\n【未知动作】\n参数：x=1\n请确认是否执行。"
+    )))
+
+    assert responses[-1] == "模型返回了非结构化确认，请重新发起或简化指令。"
+    assert executor.state == ExecutorState.IDLE
 
 
 def test_operational_action_still_requests_confirmation(tmp_path):

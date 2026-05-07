@@ -83,3 +83,12 @@ Conflict/reasonableness check: this request may imply a new third-party dependen
 - Preserve step-by-step confirmation for multi-action requests such as platform offset, scene change, and anti-roll bar changes.
 
 Conflict/reasonableness check: this implements the confirmed local plan. It does not introduce dependencies, change database schemas, alter governance policy definitions, or remove existing user-facing features.
+
+## 2026-05-07 - State-machine driven multi-step action queue
+
+- Fix multi-turn LLM degradation where the model emits confirmation-looking text instead of structured tool calls after several agent interactions.
+- Add an executor-owned action queue so multi-step requests are parsed once, then confirmed and executed step by step without asking the LLM to remember remaining work after each action.
+- Add an internal `submit_action_plan` protocol tool for structured multi-action plans, plus protocol-error handling for non-structured pseudo confirmation text.
+- Preserve single-action confirmation, read-only direct query behavior, stale confirmation rejection, and the chat confirmation panel.
+
+Conflict/reasonableness check: this is a local runtime/state-machine change chosen to avoid adding an external framework dependency. It does not change external device, CarSim, database, or governance interfaces.

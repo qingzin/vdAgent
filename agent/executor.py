@@ -4,6 +4,7 @@ Agent Executor - Agent 调度核心
 """
 
 from dataclasses import dataclass
+import re
 from uuid import uuid4
 
 try:
@@ -79,6 +80,8 @@ SYSTEM_PROMPT = """你是一个驾驶模拟器控制系统的智能助手。用�
 
 多步执行规则:
 - 用户可能一次要求多个操作（如"改弹簧和稳定杆"），你需要依次调用所有必要工具
+- 用户一次提出多个明确操作时，必须调用 submit_action_plan 提交完整步骤队列，不要只调用第一步工具
+- submit_action_plan 只用于提交计划，steps 中的每一步仍会由程序逐步确认和执行
 - 每步执行后，系统会询问"任务是否已全部完成"——已完成则回复"完成"，否则继续
 - 如果上一步失败，分析原因并决定是否重试或调整方案
 - 最多可连续执行 5 步
@@ -90,8 +93,9 @@ SYSTEM_PROMPT = """你是一个驾驶模拟器控制系统的智能助手。用�
 4. 用中文回复
 5. 遇到复杂底盘目标或主观反馈(例如侧倾大、单移线表现差、方向盘中心区重、起伏舒适性差、修改悬架并验证),优先调用 plan_chassis_task 或 suggest_chassis_tuning 形成方案/建议,不要直接修改弹簧、稳定杆或触感参数
 6. 只有当用户明确确认了具体参数修改或准备动作时,才调用 set_spring、set_antiroll_bar、tune_haptic_feedback、prepare_test_scene、run_carsim、start_recording、stop_recording 等操作型工具
-7. 当用户询问"为什么"、寻求原理解释或需要分析时,优先调用 search_knowledge 检索领域知识库,结合当前系统状态给出有依据的回答
-8. 如果用户描述了一个有价值的调校经验或规律,主动调用 save_knowledge 将其保存
+7. 不要用普通文本输出"我将执行以下操作...请确认是否执行"；需要确认时必须返回结构化工具调用，由程序生成确认界面
+8. 当用户询问"为什么"、寻求原理解释或需要分析时,优先调用 search_knowledge 检索领域知识库,结合当前系统状态给出有依据的回答
+9. 如果用户描述了一个有价值的调校经验或规律,主动调用 save_knowledge 将其保存
 
 当前系统支持的操作领域:
 - 车型选择与切换
@@ -191,6 +195,8 @@ MAX_HISTORY_RETRY_MESSAGES = 4
 MAX_HISTORY_RETRY_MESSAGE_CHARS = 500
 HISTORY_TRUNCATION_SUFFIX = "\n...(history truncated)"
 AUTO_EXECUTE_CATEGORIES = {"planning", "knowledge"}
+ACTION_PLAN_TOOL_NAME = "submit_action_plan"
+ACTION_PLAN_MAX_STEPS = 5
 RECOVERABLE_LLM_ERROR_MARKERS = (
     "400",
     "bad request",
@@ -220,6 +226,14 @@ class ConfirmationStatus:
     FAILED = "failed"
 
 
+class ActionPlanStepStatus:
+    PENDING = "pending"
+    CONFIRMING = "confirming"
+    EXECUTING = "executing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
 @dataclass
 class ConfirmationRecord:
     confirmation_id: str
@@ -227,6 +241,16 @@ class ConfirmationRecord:
     params: dict
     summary: str
     status: str = ConfirmationStatus.PENDING
+    result: str = ""
+
+
+@dataclass
+class ActionPlanStep:
+    action_name: str
+    params: dict
+    summary: str = ""
+    reason: str = ""
+    status: str = ActionPlanStepStatus.PENDING
     result: str = ""
 
 
@@ -293,6 +317,9 @@ class AgentExecutor(QObject):
         self._auto_step_count = 0
         self._auto_step_max = 5
         self._multi_step_active = False
+        self._active_plan_id = None
+        self._pending_plan_steps = []
+        self._current_plan_step = None
         self._session_store = SessionStore()
         self._session_id = None
         from collections import deque
@@ -319,6 +346,7 @@ class AgentExecutor(QObject):
         self._llm_recovery_attempted = False
         self._auto_step_count = 0
         self._multi_step_active = True
+        self._clear_action_plan()
         self._append_history({"role": "user", "content": user_message})
         self._call_llm()
 
@@ -331,6 +359,7 @@ class AgentExecutor(QObject):
             self._llm_recovery_attempted = False
             self._auto_step_count = 0
             self._multi_step_active = True
+            self._clear_action_plan()
             self._append_history({"role": "user", "content": next_msg})
             self._call_llm()
 
@@ -395,7 +424,7 @@ class AgentExecutor(QObject):
         self._call_generation += 1
         generation = self._call_generation
 
-        tools = self.registry.get_tools_schema()
+        tools = self._tools_with_action_plan_schema()
         self._write_trace("llm_request", payload={"tool_count": len(tools)})
 
         context_text = self._build_full_context()
@@ -487,64 +516,141 @@ class AgentExecutor(QObject):
             lines.append(f"- {action}{ctx_str}: {result}")
         return "\n".join(lines)
 
+    def _tools_with_action_plan_schema(self) -> list:
+        tools = list(self.registry.get_tools_schema())
+        tools.append({
+            "type": "function",
+            "function": {
+                "name": ACTION_PLAN_TOOL_NAME,
+                "description": (
+                    "提交一个多步操作计划。用户一次要求多个明确操作时必须使用。"
+                    "该工具只提交步骤队列,每一步会由程序逐步确认后执行。"
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "steps": {
+                            "type": "array",
+                            "minItems": 1,
+                            "maxItems": ACTION_PLAN_MAX_STEPS,
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "action_name": {
+                                        "type": "string",
+                                        "description": "已注册业务 action 名称",
+                                    },
+                                    "params": {
+                                        "type": "object",
+                                        "description": "传给 action 的参数对象",
+                                    },
+                                    "reason": {
+                                        "type": "string",
+                                        "description": "为什么需要这一步,可选",
+                                    },
+                                },
+                                "required": ["action_name", "params"],
+                            },
+                        }
+                    },
+                    "required": ["steps"],
+                },
+            },
+        })
+        return tools
+
     def _on_llm_response(self, response):
         """处理 LLM 响应"""
         self._stop_busy_watchdog()
 
-        if response.has_tool_call:
-            name = response.tool_name
-            params = response.tool_params or {}
+        tool_calls = self._iter_tool_calls(response)
+        if tool_calls:
+            if len(tool_calls) > 1:
+                self._start_action_plan_from_calls(tool_calls)
+                return
+            name, params = tool_calls[0]
+            self._handle_tool_call(name, params)
+            return
+
+        text = response.text or "(无响应)"
+        self._handle_llm_text_response(text)
+
+    def _iter_tool_calls(self, response) -> list:
+        calls = []
+        for call in getattr(response, "tool_calls", []) or []:
+            name = call.get("name")
+            params = call.get("arguments") or call.get("params") or {}
+            if name:
+                calls.append((name, params))
+        if not calls and getattr(response, "has_tool_call", False):
+            calls.append((response.tool_name, response.tool_params or {}))
+        return calls
+
+    def _handle_tool_call(self, name: str, params: dict):
+        self._write_trace(
+            "llm_tool_call",
+            message=f"LLM requested action {name}",
+            payload={"params": params},
+            action_name=name,
+        )
+
+        if name == ACTION_PLAN_TOOL_NAME:
+            self._start_action_plan(params.get("steps", []))
+            return
+
+        if not self.registry.has_action(name):
+            msg = f"未知操作:{name},请重新描述您的需求。"
+            self._write_trace("unknown_action", msg, status="error",
+                              action_name=name,
+                              payload={"params": params})
+            self._append_history({"role": "assistant", "content": msg})
+            self.response_ready.emit(msg)
+            self._stop_multi_step()
+            self._set_state(ExecutorState.IDLE)
+            self._drain_queue()
+            return
+
+        if self._should_auto_execute_action(name):
+            self._auto_execute_action(name, params)
+            return
+
+        self._multi_step_active = True
+        self._request_action_confirmation(name, params)
+
+    def _handle_llm_text_response(self, text: str):
+        if self._is_recoverable_llm_error(text):
+            self._retry_llm_with_compacted_history(text)
+            return
+        self._write_trace("llm_text_response", text)
+        parsed = self._parse_pseudo_confirmation_text(text)
+        if parsed:
+            name, params = parsed
             self._write_trace(
-                "llm_tool_call",
-                message=f"LLM requested action {name}",
+                "pseudo_confirmation_converted",
+                "Converted non-structured confirmation text to confirm_request",
                 payload={"params": params},
                 action_name=name,
             )
-
-            if not self.registry.has_action(name):
-                msg = f"未知操作:{name},请重新描述您的需求。"
-                self._write_trace("unknown_action", msg, status="error",
-                                  action_name=name,
-                                  payload={"params": params})
-                self._append_history({"role": "assistant", "content": msg})
-                self.response_ready.emit(msg)
-                self._stop_multi_step()
-                self._set_state(ExecutorState.IDLE)
-                self._drain_queue()
-                return
-
-            if self._should_auto_execute_action(name):
-                self._auto_execute_action(name, params)
-                return
-
-            self._multi_step_active = True
-            summary = self._build_confirmation_summary(name, params)
-            confirmation = self._create_confirmation(name, params, summary)
-
-            self._append_history({
-                "role": "assistant",
-                "content": f"我将执行以下操作:\n{summary}\n请确认是否执行。"
-            })
-
-            self._set_state(ExecutorState.WAITING_CONFIRMATION)
-            self.confirm_request.emit(
-                confirmation.confirmation_id,
-                name,
-                params,
-                summary,
-            )
-        else:
-            text = response.text or "(无响应)"
-            if self._is_recoverable_llm_error(text):
-                self._retry_llm_with_compacted_history(text)
-                return
-            self._write_trace("llm_text_response", text)
-            self._append_history({"role": "assistant", "content": text})
-            self._auto_step_count = 0
-            self._multi_step_active = False
+            self._request_action_confirmation(name, params)
+            return
+        if self._looks_like_pseudo_confirmation(text):
+            msg = "模型返回了非结构化确认，请重新发起或简化指令。"
+            self._write_trace("action_plan_invalid", msg, status="error",
+                              payload={"text": text[:500]})
+            self._append_history({"role": "assistant", "content": msg})
+            self._stop_multi_step()
+            self._clear_action_plan()
             self._set_state(ExecutorState.IDLE)
-            self.response_ready.emit(text)
+            self.response_ready.emit(msg)
             self._drain_queue()
+            return
+        self._append_history({"role": "assistant", "content": text})
+        self._auto_step_count = 0
+        self._multi_step_active = False
+        self._clear_action_plan()
+        self._set_state(ExecutorState.IDLE)
+        self.response_ready.emit(text)
+        self._drain_queue()
 
     def _stop_busy_watchdog(self):
         self._busy_watchdog.stop()
@@ -602,6 +708,180 @@ class AgentExecutor(QObject):
             payload={"history_len": len(self.history)},
         )
         self._call_llm()
+
+    def _request_action_confirmation(self, action_name: str, params: dict,
+                                     plan_step: ActionPlanStep = None):
+        summary = self._build_confirmation_summary(action_name, params)
+        if plan_step is not None:
+            plan_step.summary = summary
+            plan_step.status = ActionPlanStepStatus.CONFIRMING
+            self._write_trace(
+                "action_plan_step_confirming",
+                f"Plan step waiting confirmation for {action_name}",
+                payload={
+                    "plan_id": self._active_plan_id,
+                    "params": params,
+                    "summary": summary,
+                    "remaining": len(self._pending_plan_steps),
+                },
+                action_name=action_name,
+            )
+        confirmation = self._create_confirmation(action_name, params, summary)
+        self._append_history({
+            "role": "assistant",
+            "content": f"待用户确认 {action_name}({params})"
+        })
+        self._set_state(ExecutorState.WAITING_CONFIRMATION)
+        self.confirm_request.emit(
+            confirmation.confirmation_id,
+            action_name,
+            params,
+            summary,
+        )
+
+    def _start_action_plan_from_calls(self, tool_calls: list):
+        steps = [
+            {"action_name": name, "params": params, "reason": "LLM returned multiple tool calls"}
+            for name, params in tool_calls
+        ]
+        self._start_action_plan(steps)
+
+    def _start_action_plan(self, raw_steps):
+        steps, error = self._validate_action_plan_steps(raw_steps)
+        if error:
+            self._write_trace("action_plan_invalid", error, status="error",
+                              payload={"steps": raw_steps})
+            self._append_history({"role": "assistant", "content": error})
+            self._clear_action_plan()
+            self._stop_multi_step()
+            self._set_state(ExecutorState.IDLE)
+            self.response_ready.emit(error)
+            self._drain_queue()
+            return
+
+        self._active_plan_id = uuid4().hex
+        self._pending_plan_steps = steps
+        self._current_plan_step = None
+        self._auto_step_count = 0
+        self._multi_step_active = False
+        self._write_trace(
+            "action_plan_created",
+            f"Action plan {self._active_plan_id} created",
+            payload={
+                "plan_id": self._active_plan_id,
+                "steps": [
+                    {"action_name": s.action_name, "params": s.params, "reason": s.reason}
+                    for s in steps
+                ],
+            },
+        )
+        self._append_history({
+            "role": "assistant",
+            "content": "已创建执行计划: " + " -> ".join(s.action_name for s in steps),
+        })
+        self._emit_next_plan_confirmation()
+
+    def _validate_action_plan_steps(self, raw_steps):
+        if not isinstance(raw_steps, list) or not raw_steps:
+            return [], "执行计划为空，请重新描述您的需求。"
+        if len(raw_steps) > ACTION_PLAN_MAX_STEPS:
+            return [], f"执行计划超过最大步骤数 {ACTION_PLAN_MAX_STEPS}，请拆分后重试。"
+
+        steps = []
+        for index, raw in enumerate(raw_steps, start=1):
+            if not isinstance(raw, dict):
+                return [], f"执行计划第 {index} 步格式错误。"
+            action_name = raw.get("action_name")
+            params = raw.get("params") or {}
+            reason = raw.get("reason", "")
+            if action_name == ACTION_PLAN_TOOL_NAME:
+                return [], "执行计划不能嵌套 submit_action_plan。"
+            if not action_name or not self.registry.has_action(action_name):
+                return [], f"执行计划第 {index} 步包含未知操作: {action_name}"
+            metadata = self.registry.get_metadata(action_name)
+            if metadata.get("exposed") is False:
+                return [], f"执行计划第 {index} 步包含未暴露操作: {action_name}"
+            if not isinstance(params, dict):
+                return [], f"执行计划第 {index} 步参数必须是对象。"
+            steps.append(ActionPlanStep(
+                action_name=action_name,
+                params=dict(params),
+                reason=str(reason) if reason else "",
+            ))
+        return steps, None
+
+    def _emit_next_plan_confirmation(self):
+        if not self._pending_plan_steps:
+            completed_plan_id = self._active_plan_id
+            self._clear_action_plan()
+            self._stop_multi_step()
+            self._set_state(ExecutorState.IDLE)
+            self._write_trace(
+                "action_plan_completed",
+                f"Action plan {completed_plan_id} completed",
+                payload={"plan_id": completed_plan_id},
+            )
+            self._append_history({"role": "assistant", "content": "执行计划已完成。"})
+            self.response_ready.emit("完成")
+            self._drain_queue()
+            return
+
+        step = self._pending_plan_steps.pop(0)
+        self._current_plan_step = step
+        self._request_action_confirmation(step.action_name, step.params, plan_step=step)
+
+    def _clear_action_plan(self):
+        self._active_plan_id = None
+        self._pending_plan_steps = []
+        self._current_plan_step = None
+
+    def _looks_like_pseudo_confirmation(self, text: str) -> bool:
+        return (
+            "我将执行以下操作" in text
+            and "请确认是否执行" in text
+            and "参数" in text
+        )
+
+    def _parse_pseudo_confirmation_text(self, text: str):
+        if not self._looks_like_pseudo_confirmation(text):
+            return None
+        action_name = None
+        for name in self.registry.get_action_names():
+            if name in text:
+                action_name = name
+                break
+            desc = self.registry.get_description(name)
+            if desc and desc in text:
+                action_name = name
+                break
+        if not action_name:
+            return None
+        params = self._parse_pseudo_confirmation_params(text)
+        return action_name, params
+
+    def _parse_pseudo_confirmation_params(self, text: str) -> dict:
+        match = re.search(r"参数[:：]\s*(.+)", text, re.DOTALL)
+        if not match:
+            return {}
+        params_text = match.group(1).strip()
+        params_text = params_text.split("\n", 1)[0]
+        params = {}
+        for item in re.split(r"[,，]\s*", params_text):
+            if "=" not in item:
+                continue
+            key, value = item.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip("'\"")
+            params[key] = self._coerce_pseudo_param_value(value)
+        return params
+
+    @staticmethod
+    def _coerce_pseudo_param_value(value: str):
+        if value in {"True", "true", "是"}:
+            return True
+        if value in {"False", "false", "否"}:
+            return False
+        return value
 
     def _create_confirmation(self, action_name: str, params: dict, summary: str) -> ConfirmationRecord:
         if self._pending_confirmation is not None:
@@ -675,8 +955,11 @@ class AgentExecutor(QObject):
                           payload={
                               "confirmation_id": confirmation.confirmation_id,
                               "params": params,
+                              "plan_id": self._active_plan_id,
                           }, action_name=name)
 
+        if self._current_plan_step is not None:
+            self._current_plan_step.status = ActionPlanStepStatus.EXECUTING
         result = self.registry.execute(name, params)
         status = "error" if str(result).startswith(("执行失败", "错误")) else "ok"
         confirmation.result = result
@@ -685,23 +968,54 @@ class AgentExecutor(QObject):
             else ConfirmationStatus.COMPLETED
         )
         self._pending_confirmation = None
+        if self._current_plan_step is not None:
+            self._current_plan_step.result = result
+            self._current_plan_step.status = (
+                ActionPlanStepStatus.FAILED if status == "error"
+                else ActionPlanStepStatus.COMPLETED
+            )
         self._write_trace("action_result", result, status=status,
                           payload={
                               "confirmation_id": confirmation.confirmation_id,
                               "params": params,
+                              "plan_id": self._active_plan_id,
                           }, action_name=name)
         if status == "ok":
             self._write_experience_seed(name, params, result)
         self._record_step(name, result)
 
-        self._append_history({"role": "user", "content": "确认执行"})
+        self._append_history({"role": "user", "content": f"用户确认 {name}"})
         self._append_history({
             "role": "assistant",
-            "content": f"已执行。结果:{result}"
+            "content": f"已执行 {name}，结果:{result}"
         })
 
         self.action_done.emit(result)
-        # 允许 LLM 继续推理以支持多参数修改，但限制步数防止无限循环
+        if self._active_plan_id is not None:
+            self._write_trace(
+                "action_plan_step_done",
+                f"Plan step done for {name}",
+                status=status,
+                payload={
+                    "plan_id": self._active_plan_id,
+                    "params": params,
+                    "remaining": len(self._pending_plan_steps),
+                },
+                action_name=name,
+            )
+            if status != "ok":
+                msg = f"{result}\n\n执行计划已停止。"
+                self._clear_action_plan()
+                self._stop_multi_step()
+                self._set_state(ExecutorState.IDLE)
+                self.response_ready.emit(msg)
+                self._drain_queue()
+                return
+            self._current_plan_step = None
+            self._emit_next_plan_confirmation()
+            return
+
+        # 兼容旧的单步 direct tool call 路径
         self._continue_or_finish(result)
 
     def cancel_action(self, confirmation_id: str = None):
@@ -717,6 +1031,7 @@ class AgentExecutor(QObject):
         name, params = confirmation.action_name, confirmation.params
         self._pending_action = None
         self._pending_confirmation = None
+        self._clear_action_plan()
         self._write_trace("cancel_action", "User cancelled action",
                           payload={
                               "confirmation_id": confirmation.confirmation_id,
@@ -743,6 +1058,7 @@ class AgentExecutor(QObject):
         if self._pending_confirmation is not None:
             self._pending_confirmation.status = ConfirmationStatus.EXPIRED
         self._pending_confirmation = None
+        self._clear_action_plan()
         self.complete_session()
         self._auto_step_count = 0
         self._multi_step_active = False
@@ -811,6 +1127,7 @@ class AgentExecutor(QObject):
     def _stop_multi_step(self):
         self._auto_step_count = 0
         self._multi_step_active = False
+        self._clear_action_plan()
 
     def _record_step(self, action_name: str, result: str):
         """跨会话持久化：记录每一步操作。"""
@@ -858,6 +1175,7 @@ class AgentExecutor(QObject):
     def _auto_execute_action(self, name: str, params: dict):
         self._pending_action = None
         self._pending_confirmation = None
+        self._clear_action_plan()
         self._set_state(ExecutorState.EXECUTING_ACTION)
         self._write_trace("auto_execute_action", "Auto-executing read-only action",
                           payload={"params": params}, action_name=name)

@@ -153,3 +153,29 @@ def test_action_done_does_not_clear_active_confirmation_panel():
 
     widget.close()
     app.processEvents()
+
+
+def test_action_done_followed_by_next_confirm_keeps_next_panel_visible():
+    app = _app()
+    executor = FakeExecutor()
+    widget = ChatWidget(executor)
+    widget.show()
+    app.processEvents()
+
+    executor._pending_confirmation_id = "confirm-first"
+    widget._on_confirm_request("confirm-first", "first_action", {}, "first summary")
+    app.processEvents()
+
+    widget.panel_confirm_btn.click()
+    widget._on_action_done("first action done")
+    executor._pending_confirmation_id = "confirm-second"
+    widget._on_confirm_request("confirm-second", "second_action", {}, "second summary")
+    app.processEvents()
+
+    assert widget._active_confirmation_id == "confirm-second"
+    assert widget.confirm_panel.isVisible()
+    assert "second_action" in widget.confirm_panel_label.text()
+    assert "confirm-second" in widget.confirm_panel_label.text()
+
+    widget.close()
+    app.processEvents()
