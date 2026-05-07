@@ -189,11 +189,15 @@ class ChatWidget(QDockWidget):
         self._init_ui()
         self._connect_signals()
         self._confirm_pending = False
+        self._active_confirmation_id = None
 
     def showEvent(self, event):
         """Dock 重新显示时恢复确认对话框。"""
         super().showEvent(event)
-        if self._confirm_pending and self.executor._pending_action is not None:
+        if (
+            self._confirm_pending
+            and self.executor.has_pending_confirmation(self._active_confirmation_id)
+        ):
             self.confirm_dialog.show()
             self.confirm_dialog.raise_()
 
@@ -380,15 +384,17 @@ class ChatWidget(QDockWidget):
     def _on_agent_response(self, text):
         """收到 Agent 文本回复"""
         self._confirm_pending = False
+        self._active_confirmation_id = None
         self.confirm_dialog.hide()
         self._append_agent_message(text)
         self._enable_input()
 
-    def _on_confirm_request(self, name, params, summary):
+    def _on_confirm_request(self, confirmation_id, name, params, summary):
         """收到确认请求"""
         self._confirm_pending = True
+        self._active_confirmation_id = confirmation_id
         self._append_agent_message(f"我将执行以下操作：\n{summary}")
-        self._recreate_confirm_dialog()
+        self._recreate_confirm_dialog(confirmation_id)
         self.confirm_dialog.set_summary(summary)
         self.confirm_dialog.show()
         self.confirm_dialog.raise_()
@@ -396,24 +402,34 @@ class ChatWidget(QDockWidget):
         self.input_field.setEnabled(False)
         self.send_btn.setEnabled(False)
 
-    def _on_confirm(self):
+    def _on_confirm(self, confirmation_id=None, dialog=None):
         """用户确认执行"""
-        self._confirm_pending = False
-        self.confirm_dialog.hide()
-        self._append_user_message(" 确认执行")
-        self.executor.confirm_action()
+        confirmation_id = confirmation_id or self._active_confirmation_id
+        is_active = confirmation_id == self._active_confirmation_id
+        if is_active:
+            self._confirm_pending = False
+            self._active_confirmation_id = None
+            self._append_user_message(" 确认执行")
+        (dialog or self.confirm_dialog).hide()
+        self.executor.confirm_action(confirmation_id)
 
-    def _on_cancel(self):
+    def _on_cancel(self, confirmation_id=None, dialog=None):
         """用户取消执行"""
-        self._confirm_pending = False
-        self.confirm_dialog.hide()
-        self._append_user_message(" 取消")
-        self.executor.cancel_action()
-        self._enable_input()
+        confirmation_id = confirmation_id or self._active_confirmation_id
+        is_active = confirmation_id == self._active_confirmation_id
+        if is_active:
+            self._confirm_pending = False
+            self._active_confirmation_id = None
+            self._append_user_message(" 取消")
+        (dialog or self.confirm_dialog).hide()
+        self.executor.cancel_action(confirmation_id)
+        if is_active:
+            self._enable_input()
 
     def _on_action_done(self, result):
         """操作执行完成"""
         self._confirm_pending = False
+        self._active_confirmation_id = None
         self.confirm_dialog.hide()
         self._append_system_message(f"✅ {result}")
         self._enable_input()
@@ -431,13 +447,14 @@ class ChatWidget(QDockWidget):
     def _clear_chat(self):
         """清空聊天记录"""
         self._confirm_pending = False
+        self._active_confirmation_id = None
         self.chat_display.clear()
         self.executor.clear_history()
         self.confirm_dialog.hide()
         self._enable_input()
         self._append_system_message("对话已清空。请输入新的指令。")
 
-    def _recreate_confirm_dialog(self):
+    def _recreate_confirm_dialog(self, confirmation_id):
         """Create a fresh dialog for each request to avoid stale hidden Qt windows."""
         old_dialog = getattr(self, "confirm_dialog", None)
         if old_dialog is not None:
@@ -450,8 +467,13 @@ class ChatWidget(QDockWidget):
         self.confirm_dialog = ConfirmDialog(self)
         self.confirm_btn = self.confirm_dialog.confirm_btn
         self.cancel_btn = self.confirm_dialog.cancel_btn
-        self.confirm_btn.clicked.connect(self._on_confirm)
-        self.cancel_btn.clicked.connect(self._on_cancel)
+        dialog = self.confirm_dialog
+        self.confirm_btn.clicked.connect(
+            lambda checked=False, cid=confirmation_id, dlg=dialog: self._on_confirm(cid, dlg)
+        )
+        self.cancel_btn.clicked.connect(
+            lambda checked=False, cid=confirmation_id, dlg=dialog: self._on_cancel(cid, dlg)
+        )
 
     # --- 消息渲染 ---
 

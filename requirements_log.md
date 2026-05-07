@@ -49,3 +49,28 @@ Conflict/reasonableness check: this is scoped to the chat UI confirmation dialog
 - Keep the existing confirmation rule for adding a new third-party dependency that is not already declared by the project.
 
 Conflict/reasonableness check: this refines the workflow for environment setup. It is compatible with the existing rule to stop before introducing new undeclared third-party dependencies.
+
+## 2026-05-06 - Development roadmap from commit history
+
+- Review the full project commit history and current code structure.
+- Identify the current development phase, recurring problem areas, and likely technical debt.
+- Propose the next development direction from maintainability, reliability, product value, and testing perspectives.
+
+Conflict/reasonableness check: this is an analysis and planning request plus the required requirements log update. It does not require a new dependency, public API change, database schema change, governance policy change, or feature deletion.
+
+## 2026-05-06 - Explicit executor state and confirmation identity
+
+- Make `agent/executor.py` use an explicit state model instead of inferring task state only from `_is_busy`, `_multi_step_active`, and `_pending_action`.
+- Bind every confirmation request to a stable `confirmation_id`, action, params, summary, status, and result.
+- Reject stale or mismatched confirmation/cancel events so old dialogs cannot execute the wrong pending operation.
+- Keep future commit messages in Chinese.
+
+Conflict/reasonableness check: this is a requested internal executor/UI contract change. It does not add dependencies, database schema changes, governance policy changes, or remove existing user-facing features.
+
+## 2026-05-06 - Agent framework and execution state stabilization
+
+- Evaluate whether adopting an open-source agent framework such as nanobot can improve the unstable agent execution state machine.
+- Produce a detailed implementation plan for the first-priority execution-state stabilization work.
+- Execute the implementation after resolving whether to introduce an external framework dependency or use a local runtime/state-machine layer.
+
+Conflict/reasonableness check: this request may imply a new third-party dependency and may change the runtime boundary of the agent. Per project rules, the dependency/framework direction must be confirmed before implementation proceeds.

@@ -7,6 +7,8 @@ from agent.executor import (
     MAX_HISTORY_RETRY_MESSAGES,
     MAX_HISTORY_TOKENS_EST,
     AgentExecutor,
+    ConfirmationStatus,
+    ExecutorState,
 )
 from agent.memory.store import AgentMemoryStore, NullAgentMemoryStore
 from agent.registry import ActionRegistry
@@ -40,17 +42,23 @@ def test_confirm_action_writes_trace_and_experience_seed(tmp_path):
     )
     store = AgentMemoryStore(base_dir=str(tmp_path))
     executor = AgentExecutor(registry, llm_client=None, memory_store=store)
-    executor._pending_action = (
+    confirmation = executor._create_confirmation(
         "set_spring",
         {"position": "front", "spring_name": "K1"},
+        "set spring",
     )
 
-    executor.confirm_action()
+    executor.confirm_action(confirmation.confirmation_id)
 
     traces = store.query_traces(action_name="set_spring")
     seeds = store.query_experience_seeds(action_name="set_spring")
 
-    assert [t["event_type"] for t in traces] == ["confirm_action", "action_result"]
+    assert [t["event_type"] for t in traces] == [
+        "confirmation_created",
+        "confirm_action",
+        "action_result",
+    ]
+    assert confirmation.status == ConfirmationStatus.COMPLETED
     assert seeds[-1]["risk_level"] == "high"
     assert seeds[-1]["params"]["spring_name"] == "K1"
 
@@ -71,7 +79,7 @@ def test_planning_action_auto_executes_without_pending_confirm(tmp_path):
     executor = AgentExecutor(registry, llm_client=None, memory_store=store)
     confirmations = []
     responses = []
-    executor.confirm_request.connect(lambda name, params, summary: confirmations.append(name))
+    executor.confirm_request.connect(lambda cid, name, params, summary: confirmations.append(name))
     executor.response_ready.connect(responses.append)
 
     executor._on_llm_response(FakeLLMResponse(
@@ -112,7 +120,7 @@ def test_knowledge_action_auto_executes_without_pending_confirm(tmp_path):
     )
     confirmations = []
     responses = []
-    executor.confirm_request.connect(lambda name, params, summary: confirmations.append(name))
+    executor.confirm_request.connect(lambda cid, name, params, summary: confirmations.append(name))
     executor.response_ready.connect(responses.append)
 
     executor._on_llm_response(FakeLLMResponse(
@@ -143,7 +151,7 @@ def test_planning_category_with_side_effects_still_requires_confirmation(tmp_pat
         memory_store=AgentMemoryStore(base_dir=str(tmp_path)),
     )
     confirmations = []
-    executor.confirm_request.connect(lambda name, params, summary: confirmations.append(name))
+    executor.confirm_request.connect(lambda cid, name, params, summary: confirmations.append(name))
 
     executor._on_llm_response(FakeLLMResponse(
         tool_name="bad_planning_action",
@@ -173,7 +181,7 @@ def test_low_risk_readonly_query_auto_executes(tmp_path):
     )
     confirmations = []
     responses = []
-    executor.confirm_request.connect(lambda name, params, summary: confirmations.append(name))
+    executor.confirm_request.connect(lambda cid, name, params, summary: confirmations.append(name))
     executor.response_ready.connect(responses.append)
 
     executor._on_llm_response(FakeLLMResponse(tool_name="get_current_setup"))
@@ -200,7 +208,9 @@ def test_operational_action_still_requests_confirmation(tmp_path):
         memory_store=AgentMemoryStore(base_dir=str(tmp_path)),
     )
     confirmations = []
-    executor.confirm_request.connect(lambda name, params, summary: confirmations.append(name))
+    executor.confirm_request.connect(
+        lambda cid, name, params, summary: confirmations.append((cid, name))
+    )
 
     executor._on_llm_response(FakeLLMResponse(
         tool_name="set_spring",
@@ -208,7 +218,71 @@ def test_operational_action_still_requests_confirmation(tmp_path):
     ))
 
     assert executor._pending_action == ("set_spring", {"position": "front", "spring_name": "K1"})
-    assert confirmations == ["set_spring"]
+    assert confirmations[0][1] == "set_spring"
+    assert confirmations[0][0] == executor._pending_confirmation.confirmation_id
+    assert executor.state == ExecutorState.WAITING_CONFIRMATION
+    assert executor.has_pending_confirmation(confirmations[0][0]) is True
+
+
+def test_stale_confirmation_id_is_rejected(tmp_path):
+    registry = ActionRegistry()
+    registry.register(
+        name="set_spring",
+        description="set spring",
+        params_schema={"type": "object", "properties": {}, "required": []},
+        callback=lambda position, spring_name: "ok",
+        category="tuning",
+        risk_level="high",
+        exposed=True,
+    )
+    executor = AgentExecutor(
+        registry,
+        llm_client=None,
+        memory_store=AgentMemoryStore(base_dir=str(tmp_path)),
+    )
+    executor._create_confirmation(
+        "set_spring",
+        {"position": "front", "spring_name": "K1"},
+        "set spring",
+    )
+    action_results = []
+    executor.action_done.connect(action_results.append)
+
+    executor.confirm_action("stale-id")
+
+    assert action_results == []
+    assert executor._pending_action == ("set_spring", {"position": "front", "spring_name": "K1"})
+    assert executor.state == ExecutorState.WAITING_CONFIRMATION
+
+
+def test_cancel_uses_confirmation_id_and_expires_pending(tmp_path):
+    registry = ActionRegistry()
+    registry.register(
+        name="set_spring",
+        description="set spring",
+        params_schema={"type": "object", "properties": {}, "required": []},
+        callback=lambda position, spring_name: "ok",
+        category="tuning",
+        risk_level="high",
+        exposed=True,
+    )
+    executor = AgentExecutor(
+        registry,
+        llm_client=None,
+        memory_store=AgentMemoryStore(base_dir=str(tmp_path)),
+    )
+    confirmation = executor._create_confirmation(
+        "set_spring",
+        {"position": "front", "spring_name": "K1"},
+        "set spring",
+    )
+
+    executor.cancel_action(confirmation.confirmation_id)
+
+    assert confirmation.status == ConfirmationStatus.CANCELED
+    assert executor._pending_action is None
+    assert executor._pending_confirmation is None
+    assert executor.state == ExecutorState.IDLE
 
 
 def test_unmatched_high_risk_action_warns_in_confirmation_summary(tmp_path):
@@ -229,7 +303,7 @@ def test_unmatched_high_risk_action_warns_in_confirmation_summary(tmp_path):
     )
     summaries = []
     executor.confirm_request.connect(
-        lambda name, params, summary: summaries.append(summary)
+        lambda cid, name, params, summary: summaries.append(summary)
     )
 
     executor._on_llm_response(FakeLLMResponse(
@@ -263,7 +337,7 @@ def test_matched_plan_action_still_requires_confirmation_without_warning(tmp_pat
     }
     summaries = []
     executor.confirm_request.connect(
-        lambda name, params, summary: summaries.append(summary)
+        lambda cid, name, params, summary: summaries.append(summary)
     )
 
     executor._on_llm_response(FakeLLMResponse(
@@ -342,14 +416,15 @@ def test_long_action_result_keeps_ui_result_but_truncates_history():
         llm_client=None,
         memory_store=NullAgentMemoryStore("test"),
     )
-    executor._pending_action = (
+    confirmation = executor._create_confirmation(
         "set_spring",
         {"position": "front", "spring_name": "K1"},
+        "set spring",
     )
     action_results = []
     executor.action_done.connect(action_results.append)
 
-    executor.confirm_action()
+    executor.confirm_action(confirmation.confirmation_id)
 
     assert action_results == [long_result]
     assert any(m["content"].endswith(HISTORY_TRUNCATION_SUFFIX)

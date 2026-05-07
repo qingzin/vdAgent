@@ -104,7 +104,7 @@ def smoke_planning_with_side_effects_requires_confirmation():
     executor._on_llm_response(FakeLLMResponse("unsafe_plan", {"goal": "x"}))
 
     assert executor._pending_action == ("unsafe_plan", {"goal": "x"})
-    assert confirmations and confirmations[-1][0] == "unsafe_plan"
+    assert confirmations and confirmations[-1][1] == "unsafe_plan"
 
 
 def smoke_memory_fallback():

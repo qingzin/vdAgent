@@ -3,6 +3,9 @@ Agent Executor - Agent 调度核心
 负责:接收用户输入 → 调用 LLM → 解析意图 → 请求确认 → 执行操作
 """
 
+from dataclasses import dataclass
+from uuid import uuid4
+
 try:
     from PyQt5.QtCore import QObject, pyqtSignal, QThread, QTimer
 except ImportError:  # pragma: no cover - used by non-GUI tests.
@@ -199,6 +202,34 @@ RECOVERABLE_LLM_ERROR_MARKERS = (
 )
 
 
+class ExecutorState:
+    IDLE = "idle"
+    WAITING_LLM = "waiting_llm"
+    WAITING_CONFIRMATION = "waiting_confirmation"
+    EXECUTING_ACTION = "executing_action"
+    FAILED = "failed"
+    SHUTTING_DOWN = "shutting_down"
+
+
+class ConfirmationStatus:
+    PENDING = "pending"
+    CONFIRMED = "confirmed"
+    CANCELED = "canceled"
+    EXPIRED = "expired"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+@dataclass
+class ConfirmationRecord:
+    confirmation_id: str
+    action_name: str
+    params: dict
+    summary: str
+    status: str = ConfirmationStatus.PENDING
+    result: str = ""
+
+
 class AgentWorker(QObject):
     """在子线程中运行 LLM 调用,避免阻塞 UI"""
     finished = pyqtSignal(object)
@@ -230,14 +261,16 @@ class AgentExecutor(QObject):
 
     Signals:
         response_ready: Agent 产生了文本回复 (str)
-        confirm_request: Agent 需要用户确认操作 (action_name, params, summary)
+        confirm_request: Agent 需要用户确认操作 (confirmation_id, action_name, params, summary)
         action_done: 操作执行完成 (result_str)
         thinking: Agent 正在思考 (bool)
+        state_changed: Agent 执行状态变化 (state)
     """
     response_ready = pyqtSignal(str)
-    confirm_request = pyqtSignal(str, dict, str)
+    confirm_request = pyqtSignal(str, str, dict, str)
     action_done = pyqtSignal(str)
     thinking = pyqtSignal(bool)
+    state_changed = pyqtSignal(str)
 
     def __init__(self, registry, llm_client, max_history=MAX_HISTORY_MESSAGES,
                  memory_store=None, ctx=None):
@@ -249,7 +282,9 @@ class AgentExecutor(QObject):
         self.history = []
         self.max_history = max_history
         self._pending_action = None
+        self._pending_confirmation = None
         self.recent_plan_context = None
+        self.state = ExecutorState.IDLE
         self._worker_thread = None
         self._worker = None
         self._is_busy = False
@@ -268,10 +303,17 @@ class AgentExecutor(QObject):
 
     def process_user_input(self, user_message: str):
         """处理用户输入的自然语言，忙碌时排队"""
-        if self._is_busy:
+        if self._is_busy or self.state in {
+            ExecutorState.WAITING_LLM,
+            ExecutorState.WAITING_CONFIRMATION,
+            ExecutorState.EXECUTING_ACTION,
+        }:
             self._message_queue.append(user_message)
             self._write_trace("user_input_queued", user_message,
-                              status="busy", payload={"queue_len": len(self._message_queue)})
+                              status="busy", payload={
+                                  "queue_len": len(self._message_queue),
+                                  "state": self.state,
+                              })
             return
         self._write_trace("user_input", user_message)
         self._llm_recovery_attempted = False
@@ -291,6 +333,19 @@ class AgentExecutor(QObject):
             self._multi_step_active = True
             self._append_history({"role": "user", "content": next_msg})
             self._call_llm()
+
+    def _set_state(self, state: str):
+        """显式更新 executor 状态，并写入审计轨迹。"""
+        if self.state == state:
+            return
+        previous = self.state
+        self.state = state
+        self._write_trace(
+            "state_changed",
+            f"{previous} -> {state}",
+            payload={"from": previous, "to": state},
+        )
+        self.state_changed.emit(state)
 
     def _append_history(self, message: dict):
         """追加一条消息到历史,并应用滑动窗口。"""
@@ -329,6 +384,7 @@ class AgentExecutor(QObject):
 
     def _call_llm(self):
         """在子线程中调用 LLM,注入当前系统上下文"""
+        self._set_state(ExecutorState.WAITING_LLM)
         self._is_busy = True
         self.thinking.emit(True)
         self._busy_watchdog.start(65000)
@@ -453,6 +509,8 @@ class AgentExecutor(QObject):
                 self._append_history({"role": "assistant", "content": msg})
                 self.response_ready.emit(msg)
                 self._stop_multi_step()
+                self._set_state(ExecutorState.IDLE)
+                self._drain_queue()
                 return
 
             if self._should_auto_execute_action(name):
@@ -461,14 +519,20 @@ class AgentExecutor(QObject):
 
             self._multi_step_active = True
             summary = self._build_confirmation_summary(name, params)
-            self._pending_action = (name, params)
+            confirmation = self._create_confirmation(name, params, summary)
 
             self._append_history({
                 "role": "assistant",
                 "content": f"我将执行以下操作:\n{summary}\n请确认是否执行。"
             })
 
-            self.confirm_request.emit(name, params, summary)
+            self._set_state(ExecutorState.WAITING_CONFIRMATION)
+            self.confirm_request.emit(
+                confirmation.confirmation_id,
+                name,
+                params,
+                summary,
+            )
         else:
             text = response.text or "(无响应)"
             if self._is_recoverable_llm_error(text):
@@ -478,6 +542,7 @@ class AgentExecutor(QObject):
             self._append_history({"role": "assistant", "content": text})
             self._auto_step_count = 0
             self._multi_step_active = False
+            self._set_state(ExecutorState.IDLE)
             self.response_ready.emit(text)
             self._drain_queue()
 
@@ -490,6 +555,7 @@ class AgentExecutor(QObject):
         """看门狗超时：强制重置 _is_busy，防止 agent 永久卡死。"""
         self._stop_busy_watchdog()
         self._stop_multi_step()
+        self._set_state(ExecutorState.FAILED)
         self.response_ready.emit("AI 响应超时，请重试。")
         self._drain_queue()
 
@@ -501,6 +567,7 @@ class AgentExecutor(QObject):
             return
         self._auto_step_count = 0
         self._multi_step_active = False
+        self._set_state(ExecutorState.FAILED)
         msg = f"AI 助手出错:{error_msg}"
         self._write_trace("llm_error", msg, status="error")
         self.response_ready.emit(msg)
@@ -515,6 +582,7 @@ class AgentExecutor(QObject):
         if self._llm_recovery_attempted:
             self._auto_step_count = 0
             self._multi_step_active = False
+            self._set_state(ExecutorState.FAILED)
             msg = f"AI 助手出错:{error_msg}"
             self._write_trace("llm_error", msg, status="error")
             self.response_ready.emit(msg)
@@ -535,20 +603,93 @@ class AgentExecutor(QObject):
         )
         self._call_llm()
 
-    def confirm_action(self):
+    def _create_confirmation(self, action_name: str, params: dict, summary: str) -> ConfirmationRecord:
+        if self._pending_confirmation is not None:
+            self._pending_confirmation.status = ConfirmationStatus.EXPIRED
+        confirmation = ConfirmationRecord(
+            confirmation_id=uuid4().hex,
+            action_name=action_name,
+            params=dict(params),
+            summary=summary,
+        )
+        self._pending_confirmation = confirmation
+        self._pending_action = (action_name, params)
+        self._set_state(ExecutorState.WAITING_CONFIRMATION)
+        self._write_trace(
+            "confirmation_created",
+            f"Confirmation {confirmation.confirmation_id} for {action_name}",
+            payload={
+                "confirmation_id": confirmation.confirmation_id,
+                "params": params,
+                "summary": summary,
+            },
+            action_name=action_name,
+        )
+        return confirmation
+
+    def has_pending_confirmation(self, confirmation_id: str = None) -> bool:
+        confirmation = self._pending_confirmation
+        if confirmation is None or confirmation.status != ConfirmationStatus.PENDING:
+            return False
+        if confirmation_id is not None and confirmation.confirmation_id != confirmation_id:
+            return False
+        return True
+
+    def _reject_stale_confirmation(self, confirmation_id: str, operation: str) -> bool:
+        if self.has_pending_confirmation(confirmation_id):
+            return False
+        self._write_trace(
+            f"stale_{operation}",
+            f"Stale {operation} ignored",
+            status="stale",
+            payload={
+                "confirmation_id": confirmation_id,
+                "pending_confirmation_id": (
+                    self._pending_confirmation.confirmation_id
+                    if self._pending_confirmation is not None else None
+                ),
+                "state": self.state,
+            },
+        )
+        if self._pending_confirmation is None:
+            self._pending_action = None
+            self._set_state(ExecutorState.IDLE)
+            self.response_ready.emit("确认已过期，请重新发起操作。")
+            self._drain_queue()
+        return True
+
+    def confirm_action(self, confirmation_id: str = None):
         """用户确认执行操作"""
-        if self._pending_action is None:
+        if self._pending_action is None or self._pending_confirmation is None:
+            self._reject_stale_confirmation(confirmation_id, "confirm_action")
+            return
+        if self._reject_stale_confirmation(confirmation_id, "confirm_action"):
             return
 
-        name, params = self._pending_action
+        confirmation = self._pending_confirmation
+        confirmation.status = ConfirmationStatus.CONFIRMED
+        name, params = confirmation.action_name, confirmation.params
         self._pending_action = None
+        self._set_state(ExecutorState.EXECUTING_ACTION)
         self._write_trace("confirm_action", "User confirmed action",
-                          payload={"params": params}, action_name=name)
+                          payload={
+                              "confirmation_id": confirmation.confirmation_id,
+                              "params": params,
+                          }, action_name=name)
 
         result = self.registry.execute(name, params)
         status = "error" if str(result).startswith(("执行失败", "错误")) else "ok"
+        confirmation.result = result
+        confirmation.status = (
+            ConfirmationStatus.FAILED if status == "error"
+            else ConfirmationStatus.COMPLETED
+        )
+        self._pending_confirmation = None
         self._write_trace("action_result", result, status=status,
-                          payload={"params": params}, action_name=name)
+                          payload={
+                              "confirmation_id": confirmation.confirmation_id,
+                              "params": params,
+                          }, action_name=name)
         if status == "ok":
             self._write_experience_seed(name, params, result)
         self._record_step(name, result)
@@ -563,18 +704,28 @@ class AgentExecutor(QObject):
         # 允许 LLM 继续推理以支持多参数修改，但限制步数防止无限循环
         self._continue_or_finish(result)
 
-    def cancel_action(self):
+    def cancel_action(self, confirmation_id: str = None):
         """用户取消操作"""
-        if self._pending_action is None:
+        if self._pending_action is None or self._pending_confirmation is None:
+            self._reject_stale_confirmation(confirmation_id, "cancel_action")
+            return
+        if self._reject_stale_confirmation(confirmation_id, "cancel_action"):
             return
 
-        name, params = self._pending_action
+        confirmation = self._pending_confirmation
+        confirmation.status = ConfirmationStatus.CANCELED
+        name, params = confirmation.action_name, confirmation.params
         self._pending_action = None
+        self._pending_confirmation = None
         self._write_trace("cancel_action", "User cancelled action",
-                          payload={"params": params}, action_name=name)
+                          payload={
+                              "confirmation_id": confirmation.confirmation_id,
+                              "params": params,
+                          }, action_name=name)
 
         self._auto_step_count = 0
         self._multi_step_active = False
+        self._set_state(ExecutorState.IDLE)
 
         self._append_history({"role": "user", "content": "取消执行"})
         self._append_history({
@@ -589,13 +740,18 @@ class AgentExecutor(QObject):
         """清空对话历史"""
         self.history.clear()
         self._pending_action = None
+        if self._pending_confirmation is not None:
+            self._pending_confirmation.status = ConfirmationStatus.EXPIRED
+        self._pending_confirmation = None
         self.complete_session()
         self._auto_step_count = 0
         self._multi_step_active = False
+        self._set_state(ExecutorState.IDLE)
         self._write_trace("clear_history", "Conversation history cleared")
 
     def shutdown(self):
         """应用关闭时安全清理线程和定时器。"""
+        self._set_state(ExecutorState.SHUTTING_DOWN)
         self._stop_busy_watchdog()
         self._discard_worker_thread()
         self._discard_worker(delete_later=False)
@@ -701,6 +857,8 @@ class AgentExecutor(QObject):
 
     def _auto_execute_action(self, name: str, params: dict):
         self._pending_action = None
+        self._pending_confirmation = None
+        self._set_state(ExecutorState.EXECUTING_ACTION)
         self._write_trace("auto_execute_action", "Auto-executing read-only action",
                           payload={"params": params}, action_name=name)
         result = self.registry.execute(name, params)
@@ -716,13 +874,16 @@ class AgentExecutor(QObject):
     def _continue_or_finish(self, result: str):
         """多步执行循环：结果喂回 LLM，让 LLM 决定下一步。"""
         if not self._multi_step_active:
+            self._set_state(ExecutorState.IDLE)
             self.response_ready.emit(result)
+            self._drain_queue()
             return
 
         self._auto_step_count += 1
         if self._auto_step_count >= self._auto_step_max:
             self._auto_step_count = 0
             self._multi_step_active = False
+            self._set_state(ExecutorState.IDLE)
             self.response_ready.emit(f"{result}\n\n(已达到最大执行步数 {self._auto_step_max}，自动停止)")
             self._drain_queue()
             return
