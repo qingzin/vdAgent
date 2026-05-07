@@ -1,4 +1,4 @@
-from agent.llm_client import LLMClient
+from agent.llm_client import LLMClient, ModelTurn
 
 
 def test_parse_standard_multiple_tool_calls_preserves_all_calls():
@@ -25,6 +25,8 @@ def test_parse_standard_multiple_tool_calls_preserves_all_calls():
     })
 
     assert response.has_tool_call is True
+    assert isinstance(response, ModelTurn)
+    assert response.assistant_text is None
     assert response.tool_name == "prepare_platform"
     assert response.tool_params == {"x": 1, "y": 1, "z": 1}
     assert response.tool_calls == [

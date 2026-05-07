@@ -74,6 +74,8 @@ except ImportError:  # pragma: no cover - used by non-GUI tests.
 from agent.memory.models import EngineeringExperienceSeed, ProcessTrace
 from agent.memory.store import AgentMemoryStore, NullAgentMemoryStore
 from agent.knowledge.store import KnowledgeStore
+from agent.runtime import AgentRuntime
+from agent.runtime_events import AgentEvent
 from agent.session_store import SessionStore
 
 
@@ -301,6 +303,7 @@ class AgentExecutor(QObject):
     action_done = pyqtSignal(str)
     thinking = pyqtSignal(bool)
     state_changed = pyqtSignal(str)
+    event_emitted = pyqtSignal(object)
 
     def __init__(self, registry, llm_client, max_history=MAX_HISTORY_MESSAGES,
                  memory_store=None, ctx=None):
@@ -309,6 +312,7 @@ class AgentExecutor(QObject):
         self.llm_client = llm_client
         self.memory_store = memory_store or self._build_memory_store()
         self._ctx = ctx  # AgentContext, 用于获取 UI 引用构建上下文
+        self.runtime = AgentRuntime()
         self.history = []
         self.max_history = max_history
         self._current_user_message = ""
@@ -329,8 +333,6 @@ class AgentExecutor(QObject):
         self._current_plan_step = None
         self._session_store = SessionStore()
         self._session_id = None
-        from collections import deque
-        self._message_queue = deque(maxlen=20)
         self._busy_watchdog = QTimer(self)
         self._busy_watchdog.setSingleShot(True)
         self._busy_watchdog.timeout.connect(self._on_busy_timeout)
@@ -342,13 +344,29 @@ class AgentExecutor(QObject):
             ExecutorState.WAITING_CONFIRMATION,
             ExecutorState.EXECUTING_ACTION,
         }:
-            self._message_queue.append(user_message)
+            command = self.runtime.queue.enqueue(self.runtime.session_id, user_message)
             self._write_trace("user_input_queued", user_message,
                               status="busy", payload={
-                                  "queue_len": len(self._message_queue),
+                                  "queue_len": self.runtime.queue.pending_count(self.runtime.session_id),
                                   "state": self.state,
+                                  "command_id": command.command_id,
                               })
+            self._emit_event(
+                "lifecycle",
+                "run_queued",
+                user_message,
+                status="busy",
+                payload={
+                    "queue_len": self.runtime.queue.pending_count(self.runtime.session_id),
+                    "command_id": command.command_id,
+                },
+            )
             return
+        self._start_run(user_message)
+
+    def _start_run(self, user_message: str):
+        self.runtime.start_run()
+        self._emit_event("lifecycle", "run_started", user_message)
         self._write_trace("user_input", user_message)
         self._llm_recovery_attempted = False
         self._auto_step_count = 0
@@ -360,10 +378,22 @@ class AgentExecutor(QObject):
 
     def _drain_queue(self):
         """处理消息队列中的下一条消息"""
-        if self._message_queue:
-            next_msg = self._message_queue.popleft()
+        self.runtime.finish_run()
+        command = self.runtime.queue.dequeue(self.runtime.session_id)
+        if command is not None:
+            next_msg = command.message
             self._write_trace("user_input_dequeued", next_msg,
-                              payload={"remaining": len(self._message_queue)})
+                              payload={
+                                  "remaining": self.runtime.queue.pending_count(self.runtime.session_id),
+                                  "command_id": command.command_id,
+                              })
+            self.runtime.start_run()
+            self._emit_event(
+                "lifecycle",
+                "run_started",
+                next_msg,
+                payload={"command_id": command.command_id},
+            )
             self._llm_recovery_attempted = False
             self._auto_step_count = 0
             self._multi_step_active = True
@@ -383,7 +413,31 @@ class AgentExecutor(QObject):
             f"{previous} -> {state}",
             payload={"from": previous, "to": state},
         )
+        self._emit_event(
+            "state",
+            state,
+            f"{previous} -> {state}",
+            payload={"from": previous, "to": state},
+        )
         self.state_changed.emit(state)
+
+    def _emit_event(self, stream: str, event_type: str, message: str = "",
+                    payload: dict = None, status: str = "ok") -> AgentEvent:
+        event = AgentEvent(
+            stream=stream,
+            event_type=event_type,
+            message=message,
+            payload=payload or {},
+            status=status,
+            session_id=self.runtime.session_id,
+            run_id=self.runtime.active_run_id,
+        )
+        try:
+            self.memory_store.append_event(event)
+        except Exception:
+            pass
+        self.event_emitted.emit(event)
+        return event
 
     def _append_history(self, message: dict):
         """追加一条消息到历史,并应用滑动窗口。"""
@@ -435,6 +489,7 @@ class AgentExecutor(QObject):
 
         tools = self._tools_with_action_plan_schema()
         self._write_trace("llm_request", payload={"tool_count": len(tools)})
+        self._emit_event("lifecycle", "model_request", payload={"tool_count": len(tools)})
 
         context_text = self._build_full_context()
 
@@ -602,6 +657,12 @@ class AgentExecutor(QObject):
             payload={"params": params},
             action_name=name,
         )
+        self._emit_event(
+            "tool",
+            "tool_call_created",
+            f"LLM requested action {name}",
+            payload={"action_name": name, "params": params},
+        )
 
         if name == ACTION_PLAN_TOOL_NAME:
             self._start_action_plan(params.get("steps", []))
@@ -612,6 +673,13 @@ class AgentExecutor(QObject):
             self._write_trace("unknown_action", msg, status="error",
                               action_name=name,
                               payload={"params": params})
+            self._emit_event(
+                "lifecycle",
+                "run_failed",
+                msg,
+                payload={"action_name": name, "params": params},
+                status="error",
+            )
             self._append_history({"role": "assistant", "content": msg})
             self.response_ready.emit(msg)
             self._stop_multi_step()
@@ -640,12 +708,26 @@ class AgentExecutor(QObject):
                 payload={"params": params},
                 action_name=name,
             )
+            self._emit_event(
+                "lifecycle",
+                "protocol_violation",
+                "Converted non-structured confirmation text to approval",
+                payload={"action_name": name, "params": params},
+                status="converted",
+            )
             self._request_action_confirmation(name, params)
             return
         if self._looks_like_pseudo_confirmation(text):
             msg = "模型返回了非结构化确认，请重新发起或简化指令。"
             self._write_trace("action_plan_invalid", msg, status="error",
                               payload={"text": text[:500]})
+            self._emit_event(
+                "lifecycle",
+                "protocol_violation",
+                msg,
+                payload={"text": text[:500]},
+                status="error",
+            )
             self._append_history({"role": "assistant", "content": msg})
             self._stop_multi_step()
             self._clear_action_plan()
@@ -654,11 +736,13 @@ class AgentExecutor(QObject):
             self._drain_queue()
             return
         self._append_history({"role": "assistant", "content": text})
+        self._emit_event("assistant", "message_final", text)
         self._auto_step_count = 0
         self._multi_step_active = False
         self._clear_action_plan()
         self._set_state(ExecutorState.IDLE)
         self.response_ready.emit(text)
+        self._emit_event("lifecycle", "run_finished", text)
         self._drain_queue()
 
     def _stop_busy_watchdog(self):
@@ -671,7 +755,9 @@ class AgentExecutor(QObject):
         self._stop_busy_watchdog()
         self._stop_multi_step()
         self._set_state(ExecutorState.FAILED)
-        self.response_ready.emit("AI 响应超时，请重试。")
+        msg = "AI 响应超时，请重试。"
+        self._emit_event("lifecycle", "run_timeout", msg, status="error")
+        self.response_ready.emit(msg)
         self._drain_queue()
 
     def _on_llm_error(self, error_msg):
@@ -685,6 +771,7 @@ class AgentExecutor(QObject):
         self._set_state(ExecutorState.FAILED)
         msg = f"AI 助手出错:{error_msg}"
         self._write_trace("llm_error", msg, status="error")
+        self._emit_event("lifecycle", "run_failed", msg, status="error")
         self.response_ready.emit(msg)
         self._drain_queue()
 
@@ -736,6 +823,18 @@ class AgentExecutor(QObject):
                 action_name=action_name,
             )
         confirmation = self._create_confirmation(action_name, params, summary)
+        self._emit_event(
+            "approval",
+            "approval_requested",
+            f"Approval requested for {action_name}",
+            payload={
+                "approval_id": confirmation.confirmation_id,
+                "action_name": action_name,
+                "params": params,
+                "summary": summary,
+                "plan_id": self._active_plan_id,
+            },
+        )
         self._append_history({
             "role": "assistant",
             "content": f"待用户确认 {action_name}({params})"
@@ -760,6 +859,13 @@ class AgentExecutor(QObject):
         if error:
             self._write_trace("action_plan_invalid", error, status="error",
                               payload={"steps": raw_steps})
+            self._emit_event(
+                "lifecycle",
+                "run_failed",
+                error,
+                payload={"steps": raw_steps},
+                status="error",
+            )
             self._append_history({"role": "assistant", "content": error})
             self._clear_action_plan()
             self._stop_multi_step()
@@ -774,6 +880,18 @@ class AgentExecutor(QObject):
         self._auto_step_count = 0
         self._multi_step_active = False
         self._write_trace(
+            "action_plan_created",
+            f"Action plan {self._active_plan_id} created",
+            payload={
+                "plan_id": self._active_plan_id,
+                "steps": [
+                    {"action_name": s.action_name, "params": s.params, "reason": s.reason}
+                    for s in steps
+                ],
+            },
+        )
+        self._emit_event(
+            "lifecycle",
             "action_plan_created",
             f"Action plan {self._active_plan_id} created",
             payload={
@@ -831,7 +949,14 @@ class AgentExecutor(QObject):
                 payload={"plan_id": completed_plan_id},
             )
             self._append_history({"role": "assistant", "content": "执行计划已完成。"})
+            self._emit_event("assistant", "message_final", "完成")
             self.response_ready.emit("完成")
+            self._emit_event(
+                "lifecycle",
+                "run_finished",
+                "完成",
+                payload={"plan_id": completed_plan_id},
+            )
             self._drain_queue()
             return
 
@@ -960,6 +1085,20 @@ class AgentExecutor(QObject):
                 "state": self.state,
             },
         )
+        self._emit_event(
+            "approval",
+            "approval_stale",
+            f"Stale {operation} ignored",
+            payload={
+                "approval_id": confirmation_id,
+                "pending_approval_id": (
+                    self._pending_confirmation.confirmation_id
+                    if self._pending_confirmation is not None else None
+                ),
+                "state": self.state,
+            },
+            status="stale",
+        )
         if self._pending_confirmation is None:
             self._pending_action = None
             self._set_state(ExecutorState.IDLE)
@@ -986,9 +1125,26 @@ class AgentExecutor(QObject):
                               "params": params,
                               "plan_id": self._active_plan_id,
                           }, action_name=name)
+        self._emit_event(
+            "approval",
+            "approval_confirmed",
+            f"User confirmed {name}",
+            payload={
+                "approval_id": confirmation.confirmation_id,
+                "action_name": name,
+                "params": params,
+                "plan_id": self._active_plan_id,
+            },
+        )
 
         if self._current_plan_step is not None:
             self._current_plan_step.status = ActionPlanStepStatus.EXECUTING
+        self._emit_event(
+            "tool",
+            "tool_started",
+            f"Executing {name}",
+            payload={"action_name": name, "params": params, "plan_id": self._active_plan_id},
+        )
         result = self.registry.execute(name, params)
         status = "error" if str(result).startswith(("执行失败", "错误")) else "ok"
         confirmation.result = result
@@ -1009,6 +1165,17 @@ class AgentExecutor(QObject):
                               "params": params,
                               "plan_id": self._active_plan_id,
                           }, action_name=name)
+        self._emit_event(
+            "tool",
+            "tool_failed" if status == "error" else "tool_result",
+            result,
+            payload={
+                "action_name": name,
+                "params": params,
+                "plan_id": self._active_plan_id,
+            },
+            status=status,
+        )
         if status == "ok":
             self._write_experience_seed(name, params, result)
         self._record_step(name, result)
@@ -1038,6 +1205,8 @@ class AgentExecutor(QObject):
                 self._stop_multi_step()
                 self._set_state(ExecutorState.IDLE)
                 self.response_ready.emit(msg)
+                self._emit_event("assistant", "message_final", msg)
+                self._emit_event("lifecycle", "run_failed", msg, status="error")
                 self._drain_queue()
                 return
             self._current_plan_step = None
@@ -1047,6 +1216,8 @@ class AgentExecutor(QObject):
         self._stop_multi_step()
         self._set_state(ExecutorState.IDLE)
         self.response_ready.emit("完成")
+        self._emit_event("assistant", "message_final", "完成")
+        self._emit_event("lifecycle", "run_finished", "完成")
         self._drain_queue()
 
     def cancel_action(self, confirmation_id: str = None):
@@ -1068,6 +1239,16 @@ class AgentExecutor(QObject):
                               "confirmation_id": confirmation.confirmation_id,
                               "params": params,
                           }, action_name=name)
+        self._emit_event(
+            "approval",
+            "approval_canceled",
+            f"User canceled {name}",
+            payload={
+                "approval_id": confirmation.confirmation_id,
+                "action_name": name,
+                "params": params,
+            },
+        )
 
         self._auto_step_count = 0
         self._multi_step_active = False
@@ -1080,6 +1261,8 @@ class AgentExecutor(QObject):
         })
 
         self.response_ready.emit("操作已取消。")
+        self._emit_event("assistant", "message_final", "操作已取消。")
+        self._emit_event("lifecycle", "run_finished", "操作已取消。", status="canceled")
         self._drain_queue()
 
     def clear_history(self):
@@ -1090,10 +1273,12 @@ class AgentExecutor(QObject):
             self._pending_confirmation.status = ConfirmationStatus.EXPIRED
         self._pending_confirmation = None
         self._clear_action_plan()
+        self.runtime.clear()
         self.complete_session()
         self._auto_step_count = 0
         self._multi_step_active = False
         self._set_state(ExecutorState.IDLE)
+        self._emit_event("lifecycle", "run_finished", "Conversation history cleared", status="cleared")
         self._write_trace("clear_history", "Conversation history cleared")
 
     def shutdown(self):
@@ -1210,10 +1395,23 @@ class AgentExecutor(QObject):
         self._set_state(ExecutorState.EXECUTING_ACTION)
         self._write_trace("auto_execute_action", "Auto-executing read-only action",
                           payload={"params": params}, action_name=name)
+        self._emit_event(
+            "tool",
+            "tool_started",
+            f"Auto-executing {name}",
+            payload={"action_name": name, "params": params},
+        )
         result = self.registry.execute(name, params)
         status = "error" if str(result).startswith(("执行失败", "错误")) else "ok"
         self._write_trace("action_result", result, status=status,
                           payload={"params": params}, action_name=name)
+        self._emit_event(
+            "tool",
+            "tool_failed" if status == "error" else "tool_result",
+            result,
+            payload={"action_name": name, "params": params},
+            status=status,
+        )
         if status == "ok":
             self._capture_plan_context(name, params)
         self._record_step(name, result)
@@ -1229,6 +1427,8 @@ class AgentExecutor(QObject):
             return
         self._set_state(ExecutorState.IDLE)
         self.response_ready.emit(result)
+        self._emit_event("assistant", "message_final", result)
+        self._emit_event("lifecycle", "run_finished", result)
         self._drain_queue()
 
     def _should_continue_after_readonly_action(self, action_name: str) -> bool:
@@ -1247,6 +1447,8 @@ class AgentExecutor(QObject):
         if not self._multi_step_active:
             self._set_state(ExecutorState.IDLE)
             self.response_ready.emit(result)
+            self._emit_event("assistant", "message_final", result)
+            self._emit_event("lifecycle", "run_finished", result)
             self._drain_queue()
             return
 
@@ -1255,7 +1457,10 @@ class AgentExecutor(QObject):
             self._auto_step_count = 0
             self._multi_step_active = False
             self._set_state(ExecutorState.IDLE)
-            self.response_ready.emit(f"{result}\n\n(已达到最大执行步数 {self._auto_step_max}，自动停止)")
+            msg = f"{result}\n\n(已达到最大执行步数 {self._auto_step_max}，自动停止)"
+            self.response_ready.emit(msg)
+            self._emit_event("assistant", "message_final", msg)
+            self._emit_event("lifecycle", "run_finished", msg, status="max_steps")
             self._drain_queue()
             return
 

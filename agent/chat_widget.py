@@ -394,11 +394,14 @@ class ChatWidget(QDockWidget):
         self.input_field.returnPressed.connect(self._on_send)
         self.send_btn.clicked.connect(self._on_send)
 
-        # Agent 信号
-        self.executor.response_ready.connect(self._on_agent_response)
-        self.executor.confirm_request.connect(self._on_confirm_request)
-        self.executor.action_done.connect(self._on_action_done)
-        self.executor.thinking.connect(self._on_thinking)
+        # Agent 信号。新 runtime 优先通过结构化事件驱动 UI；旧信号保留给测试和兼容层。
+        if hasattr(self.executor, "event_emitted"):
+            self.executor.event_emitted.connect(self._on_agent_event)
+        else:
+            self.executor.response_ready.connect(self._on_agent_response)
+            self.executor.confirm_request.connect(self._on_confirm_request)
+            self.executor.action_done.connect(self._on_action_done)
+            self.executor.thinking.connect(self._on_thinking)
 
     def _on_send(self):
         """发送用户消息"""
@@ -423,6 +426,41 @@ class ChatWidget(QDockWidget):
         self.confirm_dialog.hide()
         self._append_agent_message(text)
         self._enable_input()
+
+    def _on_agent_event(self, event):
+        """收到 runtime 结构化事件。"""
+        stream = getattr(event, "stream", "")
+        event_type = getattr(event, "event_type", "")
+        payload = getattr(event, "payload", {}) or {}
+        message = getattr(event, "message", "")
+
+        if stream == "state":
+            self._on_thinking(event_type == "waiting_llm")
+            return
+
+        if stream == "approval" and event_type == "approval_requested":
+            self._on_confirm_request(
+                payload.get("approval_id"),
+                payload.get("action_name", ""),
+                payload.get("params", {}),
+                payload.get("summary", ""),
+            )
+            return
+
+        if stream == "tool" and event_type in {"tool_result", "tool_failed"}:
+            self._on_action_done(message)
+            return
+
+        if stream == "assistant" and event_type == "message_final":
+            self._on_agent_response(message)
+            return
+
+        if stream == "lifecycle" and event_type in {
+            "run_failed",
+            "run_timeout",
+            "protocol_violation",
+        }:
+            self._on_agent_response(message)
 
     def _on_confirm_request(self, confirmation_id, name, params, summary):
         """收到确认请求"""

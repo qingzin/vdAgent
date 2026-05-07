@@ -23,6 +23,18 @@ class LLMResponse:
         self.raw: Optional[dict] = None
 
 
+class ModelTurn(LLMResponse):
+    """Structured model turn returned by LLMClient."""
+
+    @property
+    def assistant_text(self) -> Optional[str]:
+        return self.text
+
+    @assistant_text.setter
+    def assistant_text(self, value: Optional[str]):
+        self.text = value
+
+
 class LLMClient:
     """支持本地和远程两种模式的 LLM 客户端。"""
 
@@ -42,7 +54,7 @@ class LLMClient:
             return True
 
     def chat(self, messages: list, tools: list = None,
-             system: str = None, temperature: float = 0.3) -> LLMResponse:
+             system: str = None, temperature: float = 0.3) -> ModelTurn:
         """
         发送聊天请求。根据 config.mode 选择本地或远程 API。
         """
@@ -87,21 +99,21 @@ class LLMClient:
             data = resp.json()
             return self._parse_response(data)
         except requests.exceptions.ConnectionError:
-            result = LLMResponse()
+            result = ModelTurn()
             result.text = "无法连接到 LLM 服务，请确认服务已启动。"
             return result
         except requests.exceptions.Timeout:
-            result = LLMResponse()
+            result = ModelTurn()
             result.text = "LLM 响应超时，请重试。"
             return result
         except Exception as e:
-            result = LLMResponse()
+            result = ModelTurn()
             result.text = f"LLM 通信错误：{e}"
             return result
 
-    def _parse_response(self, data: dict) -> LLMResponse:
+    def _parse_response(self, data: dict) -> ModelTurn:
         """解析 API 响应，处理正常返回和 fallback"""
-        result = LLMResponse()
+        result = ModelTurn()
         result.raw = data
 
         try:

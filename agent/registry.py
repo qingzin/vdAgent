@@ -70,6 +70,21 @@ class ActionRegistry:
             "side_effects": info.get("side_effects", True),
         }
 
+    def get_action_info(self, name: str) -> dict:
+        """只读返回 action 的完整公开描述，供 runtime/introspection 使用。"""
+        if name not in self._actions:
+            return {}
+        info = self._actions[name]
+        return {
+            "name": name,
+            "description": info.get("description", ""),
+            "parameters": info.get("parameters", {}),
+            "category": info.get("category"),
+            "risk_level": info.get("risk_level", "medium"),
+            "exposed": info.get("exposed", True),
+            "side_effects": info.get("side_effects", True),
+        }
+
     def execute(self, name: str, params: dict) -> str:
         """
         执行指定的 action

@@ -7,6 +7,7 @@ from PyQt5.QtCore import QObject, pyqtSignal
 from PyQt5.QtWidgets import QApplication
 
 from agent.chat_widget import ChatWidget
+from agent.runtime_events import AgentEvent
 
 
 class FakeExecutor(QObject):
@@ -41,6 +42,10 @@ class FakeExecutor(QObject):
 
     def clear_history(self):
         self._pending_confirmation_id = None
+
+
+class FakeEventExecutor(FakeExecutor):
+    event_emitted = pyqtSignal(object)
 
 
 def _app():
@@ -176,6 +181,34 @@ def test_action_done_followed_by_next_confirm_keeps_next_panel_visible():
     assert widget.confirm_panel.isVisible()
     assert "second_action" in widget.confirm_panel_label.text()
     assert "confirm-second" in widget.confirm_panel_label.text()
+
+    widget.close()
+    app.processEvents()
+
+
+def test_chat_widget_consumes_runtime_approval_event():
+    app = _app()
+    executor = FakeEventExecutor()
+    widget = ChatWidget(executor)
+    widget.show()
+    app.processEvents()
+
+    executor._pending_confirmation_id = "approval-1"
+    executor.event_emitted.emit(AgentEvent(
+        stream="approval",
+        event_type="approval_requested",
+        payload={
+            "approval_id": "approval-1",
+            "action_name": "set_spring",
+            "params": {"position": "front"},
+            "summary": "set spring",
+        },
+    ))
+    app.processEvents()
+
+    assert widget._active_confirmation_id == "approval-1"
+    assert widget.confirm_panel.isVisible()
+    assert "set_spring" in widget.confirm_panel_label.text()
 
     widget.close()
     app.processEvents()

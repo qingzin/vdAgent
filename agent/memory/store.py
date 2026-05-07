@@ -17,6 +17,11 @@ class NullAgentMemoryStore:
     def __init__(self, reason: str = ""):
         self.reason = reason
 
+    def append_event(self, event) -> dict:
+        if hasattr(event, "to_dict"):
+            return event.to_dict()
+        return dict(event or {})
+
     def append_trace(self, trace: ProcessTrace) -> dict:
         return trace.to_dict()
 
@@ -50,8 +55,14 @@ class AgentMemoryStore:
     def __init__(self, base_dir: str = "agent_data"):
         self.base_dir = Path(base_dir)
         self.run_logs_path = self.base_dir / "run_logs.jsonl"
+        self.events_path = self.base_dir / "events.jsonl"
         self.experience_seeds_path = self.base_dir / "experience_seeds.jsonl"
         self.base_dir.mkdir(parents=True, exist_ok=True)
+
+    def append_event(self, event) -> dict:
+        record = event.to_dict() if hasattr(event, "to_dict") else dict(event)
+        self._append_jsonl(self.events_path, record)
+        return record
 
     def append_trace(self, trace: ProcessTrace) -> dict:
         record = trace.to_dict()

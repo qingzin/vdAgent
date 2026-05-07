@@ -348,6 +348,45 @@ def test_action_plan_executes_confirmations_without_llm_continuation(tmp_path):
     assert len({cid for cid, _name in emitted}) == 3
 
 
+def test_executor_emits_structured_runtime_events_for_action_plan(tmp_path):
+    registry = ActionRegistry()
+    for action_name in ("prepare_platform", "prepare_test_scene"):
+        registry.register(
+            name=action_name,
+            description=action_name,
+            params_schema={"type": "object", "properties": {}, "required": []},
+            callback=lambda **kwargs: f"ok {kwargs}",
+            category="test",
+            risk_level="medium",
+            exposed=True,
+        )
+    executor = AgentExecutor(
+        registry,
+        llm_client=None,
+        memory_store=AgentMemoryStore(base_dir=str(tmp_path)),
+    )
+    events = []
+    confirmations = []
+    executor.event_emitted.connect(events.append)
+    executor.confirm_request.connect(lambda cid, name, params, summary: confirmations.append(cid))
+    executor._on_llm_response(FakeLLMResponse("submit_action_plan", {
+        "steps": [
+            {"action_name": "prepare_platform", "params": {"x": 1}},
+            {"action_name": "prepare_test_scene", "params": {"map_name": "性能广场"}},
+        ]
+    }))
+    executor.confirm_action(confirmations.pop(0))
+    executor.confirm_action(confirmations.pop(0))
+
+    event_keys = [(e.stream, e.event_type) for e in events]
+    assert ("lifecycle", "action_plan_created") in event_keys
+    assert ("approval", "approval_requested") in event_keys
+    assert ("approval", "approval_confirmed") in event_keys
+    assert ("tool", "tool_started") in event_keys
+    assert ("tool", "tool_result") in event_keys
+    assert ("lifecycle", "run_finished") in event_keys
+
+
 def test_multiple_llm_tool_calls_are_treated_as_action_plan(tmp_path):
     registry = ActionRegistry()
     for action_name in ("prepare_platform", "set_antiroll_bar"):

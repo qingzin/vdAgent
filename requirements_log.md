@@ -101,3 +101,12 @@ Conflict/reasonableness check: this is a local runtime/state-machine change chos
 - Stop the extra LLM continuation after a confirmed single direct action; the executor can finish deterministically after action completion.
 
 Conflict/reasonableness check: this refines the local executor protocol handling introduced by the action queue work. It does not add dependencies or change external device, CarSim, database, or governance interfaces.
+
+## 2026-05-07 - OpenClaw-style agent runtime refactor
+
+- Refactor the local agent runtime toward an OpenClaw-style loop with command queue, structured runtime events, tool/approval lifecycle events, and JSONL event transcripts.
+- Keep existing action/service registration compatible while allowing ChatWidget to consume structured runtime events instead of inferring executor state from mixed signals and assistant text.
+- Preserve JSONL persistence and legacy `ProcessTrace` compatibility; do not introduce OpenClaw or any other third-party dependency.
+- Implement in staged commits, starting from the already committed read-only-context and pseudo-confirmation fix.
+
+Conflict/reasonableness check: this is a substantial internal runtime refactor but keeps external simulator, CarSim, database, and governance interfaces unchanged. It is reasonable because repeated executor patches show the current monolithic state machine is the core maintainability risk.
