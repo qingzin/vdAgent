@@ -92,3 +92,12 @@ Conflict/reasonableness check: this implements the confirmed local plan. It does
 - Preserve single-action confirmation, read-only direct query behavior, stale confirmation rejection, and the chat confirmation panel.
 
 Conflict/reasonableness check: this is a local runtime/state-machine change chosen to avoid adding an external framework dependency. It does not change external device, CarSim, database, or governance interfaces.
+
+## 2026-05-07 - Read-only context actions and pending-confirmation text
+
+- Fix modification requests such as "前轮弹簧刚度降低5%" where the LLM first calls a read-only setup query to calculate the target value.
+- Treat read-only actions as intermediate context when the original user message clearly expresses a mutation intent, while preserving direct return for explicit status/query requests.
+- Convert model text like `待用户确认 set_spring({...})` into a real confirmation request instead of ending the flow as a normal assistant reply.
+- Stop the extra LLM continuation after a confirmed single direct action; the executor can finish deterministically after action completion.
+
+Conflict/reasonableness check: this refines the local executor protocol handling introduced by the action queue work. It does not add dependencies or change external device, CarSim, database, or governance interfaces.

@@ -4,6 +4,7 @@ Agent Executor - Agent 调度核心
 """
 
 from dataclasses import dataclass
+import ast
 import re
 from uuid import uuid4
 
@@ -206,6 +207,11 @@ RECOVERABLE_LLM_ERROR_MARKERS = (
     "too many tokens",
     "token",
 )
+QUERY_INTENT_MARKERS = ("查询", "查看", "当前", "状态", "是多少", "什么", "显示")
+MUTATION_INTENT_MARKERS = (
+    "设置", "设为", "改", "修改", "换", "切换", "降低", "升高", "增加", "减少",
+    "调整", "调低", "调高", "运行", "启动", "停止", "准备", "下发",
+)
 
 
 class ExecutorState:
@@ -305,6 +311,7 @@ class AgentExecutor(QObject):
         self._ctx = ctx  # AgentContext, 用于获取 UI 引用构建上下文
         self.history = []
         self.max_history = max_history
+        self._current_user_message = ""
         self._pending_action = None
         self._pending_confirmation = None
         self.recent_plan_context = None
@@ -347,6 +354,7 @@ class AgentExecutor(QObject):
         self._auto_step_count = 0
         self._multi_step_active = True
         self._clear_action_plan()
+        self._current_user_message = user_message
         self._append_history({"role": "user", "content": user_message})
         self._call_llm()
 
@@ -360,6 +368,7 @@ class AgentExecutor(QObject):
             self._auto_step_count = 0
             self._multi_step_active = True
             self._clear_action_plan()
+            self._current_user_message = next_msg
             self._append_history({"role": "user", "content": next_msg})
             self._call_llm()
 
@@ -836,15 +845,20 @@ class AgentExecutor(QObject):
         self._current_plan_step = None
 
     def _looks_like_pseudo_confirmation(self, text: str) -> bool:
-        return (
+        if (
             "我将执行以下操作" in text
             and "请确认是否执行" in text
             and "参数" in text
-        )
+        ):
+            return True
+        return "待用户确认" in text
 
     def _parse_pseudo_confirmation_text(self, text: str):
         if not self._looks_like_pseudo_confirmation(text):
             return None
+        explicit = self._parse_explicit_pending_confirmation_text(text)
+        if explicit:
+            return explicit
         action_name = None
         for name in self.registry.get_action_names():
             if name in text:
@@ -857,6 +871,21 @@ class AgentExecutor(QObject):
         if not action_name:
             return None
         params = self._parse_pseudo_confirmation_params(text)
+        return action_name, params
+
+    def _parse_explicit_pending_confirmation_text(self, text: str):
+        match = re.search(r"待用户确认\s+([A-Za-z_][A-Za-z0-9_]*)\((\{.*?\})\)", text, re.DOTALL)
+        if not match:
+            return None
+        action_name = match.group(1)
+        if not self.registry.has_action(action_name):
+            return None
+        try:
+            params = ast.literal_eval(match.group(2))
+        except (SyntaxError, ValueError):
+            return None
+        if not isinstance(params, dict):
+            return None
         return action_name, params
 
     def _parse_pseudo_confirmation_params(self, text: str) -> dict:
@@ -1015,8 +1044,10 @@ class AgentExecutor(QObject):
             self._emit_next_plan_confirmation()
             return
 
-        # 兼容旧的单步 direct tool call 路径
-        self._continue_or_finish(result)
+        self._stop_multi_step()
+        self._set_state(ExecutorState.IDLE)
+        self.response_ready.emit("完成")
+        self._drain_queue()
 
     def cancel_action(self, confirmation_id: str = None):
         """用户取消操作"""
@@ -1187,9 +1218,29 @@ class AgentExecutor(QObject):
             self._capture_plan_context(name, params)
         self._record_step(name, result)
         self._append_history({"role": "assistant", "content": result})
+        if status == "ok" and self._should_continue_after_readonly_action(name):
+            self._write_trace(
+                "readonly_context_continue",
+                "Continuing after read-only context action",
+                payload={"params": params, "result": result},
+                action_name=name,
+            )
+            self._continue_or_finish(result)
+            return
         self._set_state(ExecutorState.IDLE)
         self.response_ready.emit(result)
         self._drain_queue()
+
+    def _should_continue_after_readonly_action(self, action_name: str) -> bool:
+        metadata = self.registry.get_metadata(action_name)
+        if metadata.get("side_effects") is not False:
+            return False
+        user_message = self._current_user_message or ""
+        has_mutation = any(marker in user_message for marker in MUTATION_INTENT_MARKERS)
+        if not has_mutation:
+            return False
+        direct_query = user_message.strip().startswith(QUERY_INTENT_MARKERS)
+        return not direct_query
 
     def _continue_or_finish(self, result: str):
         """多步执行循环：结果喂回 LLM，让 LLM 决定下一步。"""

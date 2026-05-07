@@ -228,6 +228,63 @@ def test_readonly_query_returns_tool_result_without_llm_continuation(tmp_path):
     assert executor.state == ExecutorState.IDLE
 
 
+def test_readonly_context_action_continues_for_mutation_request(tmp_path):
+    registry = ActionRegistry()
+    registry.register(
+        name="get_current_setup",
+        description="query setup",
+        params_schema={"type": "object", "properties": {}, "required": []},
+        callback=lambda: "当前车型: demo; 前弹簧: 27 N/mm",
+        category="query",
+        risk_level="low",
+        exposed=True,
+        side_effects=False,
+    )
+    registry.register(
+        name="set_spring",
+        description="set spring",
+        params_schema={"type": "object", "properties": {}, "required": []},
+        callback=lambda position, side, spring_name: "ok",
+        category="tuning",
+        risk_level="high",
+        exposed=True,
+    )
+    executor = AgentExecutor(
+        registry,
+        llm_client=None,
+        memory_store=AgentMemoryStore(base_dir=str(tmp_path)),
+    )
+    confirmations = []
+    responses = []
+    executor.confirm_request.connect(lambda cid, name, params, summary: confirmations.append((name, params)))
+    executor.response_ready.connect(responses.append)
+    llm_responses = [
+        FakeLLMResponse(tool_name="get_current_setup"),
+        FakeLLMResponse(text=(
+            "前轮弹簧当前刚度为 27 N/mm，降低 5% 后约为 25.65 N/mm。\n\n"
+            "待用户确认 set_spring({'position': 'front', 'side': 'both', 'spring_name': '25.65'})"
+        )),
+    ]
+    llm_calls = []
+
+    def fake_call_llm():
+        llm_calls.append(list(executor.history))
+        executor._on_llm_response(llm_responses.pop(0))
+
+    executor._call_llm = fake_call_llm
+
+    executor.process_user_input("前轮弹簧刚度降低5%")
+
+    assert len(llm_calls) == 2
+    assert responses == []
+    assert confirmations == [("set_spring", {
+        "position": "front",
+        "side": "both",
+        "spring_name": "25.65",
+    })]
+    assert executor.state == ExecutorState.WAITING_CONFIRMATION
+
+
 def test_action_plan_executes_confirmations_without_llm_continuation(tmp_path):
     registry = ActionRegistry()
     for action_name in ("prepare_platform", "prepare_test_scene", "set_antiroll_bar"):
@@ -426,6 +483,38 @@ def test_pseudo_confirmation_text_is_converted_to_confirm_request(tmp_path):
     assert executor.state == ExecutorState.WAITING_CONFIRMATION
 
 
+def test_pending_confirmation_text_is_converted_to_confirm_request(tmp_path):
+    registry = ActionRegistry()
+    registry.register(
+        name="set_spring",
+        description="set spring",
+        params_schema={"type": "object", "properties": {}, "required": []},
+        callback=lambda position, side, spring_name: "ok",
+        category="tuning",
+        risk_level="high",
+        exposed=True,
+    )
+    executor = AgentExecutor(
+        registry,
+        llm_client=None,
+        memory_store=AgentMemoryStore(base_dir=str(tmp_path)),
+    )
+    confirmations = []
+    executor.confirm_request.connect(lambda cid, name, params, summary: confirmations.append((name, params)))
+
+    executor._on_llm_response(FakeLLMResponse(text=(
+        "前轮弹簧当前刚度为 27 N/mm，降低 5% 后约为 25.65 N/mm。\n\n"
+        "待用户确认 set_spring({'position': 'front', 'side': 'both', 'spring_name': '25.65'})"
+    )))
+
+    assert confirmations == [("set_spring", {
+        "position": "front",
+        "side": "both",
+        "spring_name": "25.65",
+    })]
+    assert executor.state == ExecutorState.WAITING_CONFIRMATION
+
+
 def test_unparseable_pseudo_confirmation_returns_protocol_error(tmp_path):
     executor = AgentExecutor(
         ActionRegistry(),
@@ -474,6 +563,40 @@ def test_operational_action_still_requests_confirmation(tmp_path):
     assert confirmations[0][0] == executor._pending_confirmation.confirmation_id
     assert executor.state == ExecutorState.WAITING_CONFIRMATION
     assert executor.has_pending_confirmation(confirmations[0][0]) is True
+
+
+def test_direct_single_action_finishes_without_llm_continuation(tmp_path):
+    registry = ActionRegistry()
+    registry.register(
+        name="set_spring",
+        description="set spring",
+        params_schema={"type": "object", "properties": {}, "required": []},
+        callback=lambda position, spring_name: "ok",
+        category="tuning",
+        risk_level="high",
+        exposed=True,
+    )
+    executor = AgentExecutor(
+        registry,
+        llm_client=None,
+        memory_store=AgentMemoryStore(base_dir=str(tmp_path)),
+    )
+    confirmations = []
+    responses = []
+    executor.confirm_request.connect(lambda cid, name, params, summary: confirmations.append(cid))
+    executor.response_ready.connect(responses.append)
+    llm_calls = []
+    executor._call_llm = lambda: llm_calls.append("unexpected")
+
+    executor._on_llm_response(FakeLLMResponse(
+        tool_name="set_spring",
+        tool_params={"position": "front", "spring_name": "K1"},
+    ))
+    executor.confirm_action(confirmations[0])
+
+    assert llm_calls == []
+    assert responses[-1] == "完成"
+    assert executor.state == ExecutorState.IDLE
 
 
 def test_stale_confirmation_id_is_rejected(tmp_path):
