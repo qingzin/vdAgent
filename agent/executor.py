@@ -869,7 +869,9 @@ class AgentExecutor(QObject):
             self._capture_plan_context(name, params)
         self._record_step(name, result)
         self._append_history({"role": "assistant", "content": result})
-        self._continue_or_finish(result)
+        self._set_state(ExecutorState.IDLE)
+        self.response_ready.emit(result)
+        self._drain_queue()
 
     def _continue_or_finish(self, result: str):
         """多步执行循环：结果喂回 LLM，让 LLM 决定下一步。"""

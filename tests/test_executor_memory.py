@@ -191,6 +191,97 @@ def test_low_risk_readonly_query_auto_executes(tmp_path):
     assert responses[-1] == "当前车型: demo"
 
 
+def test_readonly_query_returns_tool_result_without_llm_continuation(tmp_path):
+    registry = ActionRegistry()
+    registry.register(
+        name="get_system_status",
+        description="system status",
+        params_schema={"type": "object", "properties": {}, "required": []},
+        callback=lambda: "当前系统状态: demo",
+        category="query",
+        risk_level="low",
+        exposed=True,
+        side_effects=False,
+    )
+    executor = AgentExecutor(
+        registry,
+        llm_client=None,
+        memory_store=AgentMemoryStore(base_dir=str(tmp_path)),
+    )
+    responses = []
+    executor.response_ready.connect(responses.append)
+    llm_calls = []
+    llm_responses = [FakeLLMResponse(tool_name="get_system_status")]
+
+    def fake_call_llm():
+        llm_calls.append(list(executor.history))
+        executor._on_llm_response(llm_responses.pop(0))
+
+    executor._call_llm = fake_call_llm
+
+    executor.process_user_input("查询当前系统状态")
+
+    assert len(llm_calls) == 1
+    assert responses == ["当前系统状态: demo"]
+    assert "完成" not in responses[-1]
+    assert executor.state == ExecutorState.IDLE
+
+
+def test_confirmed_side_effect_actions_continue_step_by_step(tmp_path):
+    registry = ActionRegistry()
+    for action_name in ("prepare_platform", "prepare_test_scene", "set_antiroll_bar"):
+        registry.register(
+            name=action_name,
+            description=action_name,
+            params_schema={"type": "object", "properties": {}, "required": []},
+            callback=lambda **kwargs: f"ok {kwargs}",
+            category="test",
+            risk_level="medium",
+            exposed=True,
+        )
+    executor = AgentExecutor(
+        registry,
+        llm_client=None,
+        memory_store=AgentMemoryStore(base_dir=str(tmp_path)),
+    )
+    confirmations = []
+    emitted = []
+    executor.confirm_request.connect(
+        lambda cid, name, params, summary: (
+            confirmations.append((cid, name)),
+            emitted.append((cid, name)),
+        )
+    )
+    llm_responses = [
+        FakeLLMResponse("prepare_platform", {"x": 1, "y": 1, "z": 1}),
+        FakeLLMResponse("prepare_test_scene", {"map_name": "性能广场"}),
+        FakeLLMResponse("set_antiroll_bar", {"position": "front", "antiroll_name": "1150"}),
+        FakeLLMResponse(text="完成"),
+    ]
+
+    def fake_call_llm():
+        executor._on_llm_response(llm_responses.pop(0))
+
+    executor._call_llm = fake_call_llm
+    responses = []
+    executor.response_ready.connect(responses.append)
+
+    executor.process_user_input("设置平台位置偏置 1 1 1，地图换成性能广场，前轮稳定杆刚度换成1150")
+    while confirmations:
+        confirmation_id, _name = confirmations.pop(0)
+        executor.confirm_action(confirmation_id)
+
+    assert responses[-1] == "完成"
+    assert executor.state == ExecutorState.IDLE
+    assert llm_responses == []
+    assert [name for _cid, name in emitted] == [
+        "prepare_platform",
+        "prepare_test_scene",
+        "set_antiroll_bar",
+    ]
+    assert len({cid for cid, _name in emitted}) == 3
+
+
 def test_operational_action_still_requests_confirmation(tmp_path):
     registry = ActionRegistry()
     registry.register(

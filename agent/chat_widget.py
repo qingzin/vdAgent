@@ -279,6 +279,40 @@ class ChatWidget(QDockWidget):
         """)
         layout.addWidget(self.chat_display, stretch=1)
 
+        # --- 持久确认条：主确认入口，避免独立弹窗丢失时流程卡住 ---
+        self.confirm_panel = QFrame()
+        self.confirm_panel.setFrameShape(QFrame.StyledPanel)
+        self.confirm_panel.setStyleSheet("""
+            QFrame {
+                background-color: #fff8e1;
+                border: 1px solid #ffb300;
+                border-radius: 4px;
+            }
+            QLabel {
+                color: #333;
+                font-size: 12px;
+            }
+        """)
+        confirm_panel_layout = QVBoxLayout()
+        confirm_panel_layout.setContentsMargins(10, 8, 10, 8)
+        confirm_panel_layout.setSpacing(6)
+        self.confirm_panel_label = QLabel()
+        self.confirm_panel_label.setWordWrap(True)
+        confirm_panel_layout.addWidget(self.confirm_panel_label)
+
+        confirm_panel_btns = QHBoxLayout()
+        confirm_panel_btns.addStretch()
+        self.panel_confirm_btn = QPushButton("确认执行")
+        self.panel_cancel_btn = QPushButton("取消")
+        self.panel_confirm_btn.clicked.connect(self._on_confirm)
+        self.panel_cancel_btn.clicked.connect(self._on_cancel)
+        confirm_panel_btns.addWidget(self.panel_confirm_btn)
+        confirm_panel_btns.addWidget(self.panel_cancel_btn)
+        confirm_panel_layout.addLayout(confirm_panel_btns)
+        self.confirm_panel.setLayout(confirm_panel_layout)
+        self.confirm_panel.setVisible(False)
+        layout.addWidget(self.confirm_panel)
+
         # --- 确认对话框（独立窗口，始终可见）---
         self.confirm_dialog = ConfirmDialog(self)
         self.confirm_btn = self.confirm_dialog.confirm_btn
@@ -385,6 +419,7 @@ class ChatWidget(QDockWidget):
         """收到 Agent 文本回复"""
         self._confirm_pending = False
         self._active_confirmation_id = None
+        self._hide_confirm_panel()
         self.confirm_dialog.hide()
         self._append_agent_message(text)
         self._enable_input()
@@ -394,6 +429,7 @@ class ChatWidget(QDockWidget):
         self._confirm_pending = True
         self._active_confirmation_id = confirmation_id
         self._append_agent_message(f"我将执行以下操作：\n{summary}")
+        self._show_confirm_panel(confirmation_id, name, summary)
         self._recreate_confirm_dialog(confirmation_id)
         self.confirm_dialog.set_summary(summary)
         self.confirm_dialog.show()
@@ -409,6 +445,7 @@ class ChatWidget(QDockWidget):
         if is_active:
             self._confirm_pending = False
             self._active_confirmation_id = None
+            self._hide_confirm_panel()
             self._append_user_message(" 确认执行")
         (dialog or self.confirm_dialog).hide()
         self.executor.confirm_action(confirmation_id)
@@ -420,6 +457,7 @@ class ChatWidget(QDockWidget):
         if is_active:
             self._confirm_pending = False
             self._active_confirmation_id = None
+            self._hide_confirm_panel()
             self._append_user_message(" 取消")
         (dialog or self.confirm_dialog).hide()
         self.executor.cancel_action(confirmation_id)
@@ -428,11 +466,14 @@ class ChatWidget(QDockWidget):
 
     def _on_action_done(self, result):
         """操作执行完成"""
-        self._confirm_pending = False
-        self._active_confirmation_id = None
-        self.confirm_dialog.hide()
+        if not self.executor.has_pending_confirmation(self._active_confirmation_id):
+            self._confirm_pending = False
+            self._active_confirmation_id = None
+            self._hide_confirm_panel()
+            self.confirm_dialog.hide()
         self._append_system_message(f"✅ {result}")
-        self._enable_input()
+        if not self._confirm_pending:
+            self._enable_input()
 
     def _on_thinking(self, is_thinking):
         """思考状态变化"""
@@ -450,9 +491,20 @@ class ChatWidget(QDockWidget):
         self._active_confirmation_id = None
         self.chat_display.clear()
         self.executor.clear_history()
+        self._hide_confirm_panel()
         self.confirm_dialog.hide()
         self._enable_input()
         self._append_system_message("对话已清空。请输入新的指令。")
+
+    def _show_confirm_panel(self, confirmation_id, action_name, summary):
+        self.confirm_panel_label.setText(
+            f"待确认操作 ({action_name})\n确认编号: {confirmation_id}\n{summary}"
+        )
+        self.confirm_panel.setVisible(True)
+
+    def _hide_confirm_panel(self):
+        self.confirm_panel.setVisible(False)
+        self.confirm_panel_label.clear()
 
     def _recreate_confirm_dialog(self, confirmation_id):
         """Create a fresh dialog for each request to avoid stale hidden Qt windows."""
@@ -460,7 +512,6 @@ class ChatWidget(QDockWidget):
         if old_dialog is not None:
             try:
                 old_dialog.hide()
-                old_dialog.deleteLater()
             except RuntimeError:
                 pass
 

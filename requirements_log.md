@@ -74,3 +74,12 @@ Conflict/reasonableness check: this is a requested internal executor/UI contract
 - Execute the implementation after resolving whether to introduce an external framework dependency or use a local runtime/state-machine layer.
 
 Conflict/reasonableness check: this request may imply a new third-party dependency and may change the runtime boundary of the agent. Per project rules, the dependency/framework direction must be confirmed before implementation proceeds.
+
+## 2026-05-07 - Query result completion and durable confirmation panel
+
+- Fix read-only query actions showing only "完成" after the action result is fed back into the LLM continuation loop.
+- Add a stable read-only `get_system_status` action for querying the current simulator/agent-visible state.
+- Make the chat panel contain a persistent confirmation strip as the primary confirmation UI, with the floating dialog kept only as an auxiliary reminder.
+- Preserve step-by-step confirmation for multi-action requests such as platform offset, scene change, and anti-roll bar changes.
+
+Conflict/reasonableness check: this implements the confirmed local plan. It does not introduce dependencies, change database schemas, alter governance policy definitions, or remove existing user-facing features.
