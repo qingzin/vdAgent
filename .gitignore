@@ -1,5 +1,11 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
-agent_data/
+agent_data/*
+!agent_data/config/
+agent_data/config/*
+!agent_data/config/report_runtime.json
+!agent_data/workflow_templates/
+agent_data/workflow_templates/*
+!agent_data/workflow_templates/leader_demo.json
 .claude/

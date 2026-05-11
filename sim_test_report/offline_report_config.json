@@ -1,0 +1,580 @@
+
+
+{
+
+  "common_config": {
+
+    "Procedure_Category": "Standard_0122",
+
+    "col_alias":{
+
+      "TimeStep": ["Time", "time_step", "Time_Step"],
+
+      "Steer_SW": ["Steer", "SteeringWheel"],
+
+      "Ay": ["Lat_Accel", "Lat_Acc", "Ay_G"],
+
+      "Vx": ["V_x", "Velocity", "VehSpeed"],
+
+      "Avx": ["AVx"],
+
+      "Avy": ["AVy"],
+
+      "Avz": ["AVz"],
+
+      "Steer_Ratio": ["RstrA_1"]
+
+      },
+
+    "preprocess":{
+
+      "sub_ori": ["Z_S1", "Z_S2"],
+
+      "scale": {
+
+        "Z_S1": 1000,
+
+        "Z_S2": 1000
+
+      }
+
+    },
+
+    "write_list": [
+
+      "Jnc_L1", "Jnc_L2", "Jnc_R1", "Jnc_R2", "Z_S1", "Z_S2",
+
+      "Ay", "Ax", "Az", "Roll", "Pitch", "Yaw",
+
+      "Fx_L1", "Fx_L2", "Fx_R1", "Fx_R2",
+
+      "AVx", "AVy", "AVz", "Fy_R2",
+
+      "Vx", "Vx_L1", "Vx_L2", "Vx_R1", "Vx_R2",
+
+      "Steer_SW", "M_SW",
+
+      "RstrA_1","Beta"
+
+      ]
+
+  },
+
+  "角阶跃": {
+
+    "Dataset":"Step",
+
+    "title": "转向盘转角阶跃工况",
+
+    "indicators": [
+
+      {
+
+        "label": "侧倾角速度(deg/s)",
+
+        "x": {"name":"TimeStep", "unit": "s"},
+
+        "y1": {"name":"Roll", "unit": "deg"},
+
+        "method": ["VDA","方法2"]
+
+      },
+
+      {
+
+        "label": "0.3g侧加响应时间(s)",
+
+        "x": {"name":"TimeStep", "unit": "s"},
+
+        "y1": {"name":"Ay", "unit": "g"},
+
+        "method": ["VDA","方法2"]
+
+      },
+
+      {
+
+        "label": "横摆角速度超调量(%)",
+
+        "x": {"name":"TimeStep", "unit": "s"},
+
+        "y1": {"name":"Avz", "unit": "deg/s"},
+
+        "method": ["VDA","方法2"]
+
+      }
+
+    ]
+
+  },
+
+  "0.3g角脉冲": {
+
+    "title": "0.3g角脉冲",
+
+    "Dataset":"Pulse Steer",
+
+    "indicators": [
+
+      {
+
+        "label": "120km/h侧倾晃动次数(次)",
+
+        "x": {"name":"TimeStep", "unit": "s"},
+
+        "y1": {"name":"Ay", "unit": "g"},
+
+        "method": ["VDA"]
+
+      }
+
+    ]
+
+  },
+
+  "加速俯仰": {
+
+    "title": "加速俯仰",
+
+    "Dataset":"Acceleration Pitch",
+
+    "indicators": [
+
+      {
+
+        "label": "加速俯仰总梯度(-)",
+
+        "x": {"name":"TimeStep", "unit": "s"},
+
+        "y1": {"name":"Ax", "unit": "g"},
+
+        "method": ["稳态聚集点拟合"]
+
+      }
+
+    ]
+
+  },
+
+  "100kmh制动俯仰": {
+
+    "Dataset":"Braking Pitch",
+
+    "title": "制动俯仰",
+
+    "indicators": [
+
+      {
+
+        "label": "制动总俯仰梯度(-)",
+
+        "x": {"name":"TimeStep", "unit": "s"},
+
+        "y1": {"name":"Ax", "unit": "g"},
+
+        "method": ["稳态聚集点拟合"]
+
+      }
+
+    ]
+
+  },
+
+  "5kmh全力制动": {
+
+    "Dataset":"5kmh Brake",
+
+    "title": "全力制动",
+
+    "indicators": [
+
+      {
+
+        "label": "全力制动窜动次数(次)",
+
+        "x": {"name":"TimeStep", "unit": "s"},
+
+        "y1": {"name":"Pitch", "unit": "deg"},
+
+        "method": ["VDA"]
+
+      },
+
+      {
+
+        "label": "全力制动最大点头角(俯角,deg)",
+
+        "has_fig": "False",
+
+        "method": ["VDA","方法2"]
+
+      },
+
+      {
+
+        "label": "全力制动最大仰角(deg)",
+
+        "has_fig": "False",
+
+        "method": ["VDA","方法2"]
+
+      },
+
+      {
+
+        "label": "全力制动俯仰次数(次)",
+
+        "x": {"name":"TimeStep", "unit": "s"},
+
+        "y1": {"name":"Ax", "unit": "g"},
+
+        "method": ["VDA"]
+
+      }
+
+    ]
+
+  },
+
+  "模拟器起伏": {
+
+    "Dataset": "Bump_18m5cm",
+
+    "title": "模拟器18m5cm起伏工况",
+
+    "indicators": [
+
+      {
+
+        "label": "前轴垂向位移(mm)",
+
+        "x": {"name":"TimeStep", "unit": "s"},
+
+        "y1": { "name": "Jnc_L1", "unit": "mm"},
+
+        "method": ["极值"],
+
+        "op": "y1_max"
+
+      },
+
+      {
+
+        "label": "后轴垂向位移(mm)",
+
+        "x": {"name":"TimeStep", "unit": "s"},
+
+        "y1": {"name":"Jnc_L2", "unit": "mm"},
+
+        "method": ["极值"],
+
+        "op": "y1_max"
+
+      },
+
+      {
+
+        "label": "俯仰角速度(deg/s)",
+
+        "x": {"name":"TimeStep", "unit": "s"},
+
+        "y1": {"name":"Avy", "unit": "deg/s"},
+
+        "method": ["极值"],
+
+        "op": "y1_max"
+
+      },
+
+      {
+
+        "label": "车身垂向加速度(g)",
+
+        "x": {"name":"TimeStep", "unit": "s"},
+
+        "y1": {"name":"Az", "unit": "g"},
+
+        "method": ["极值"],
+
+        "op": "y1_max"
+
+      }
+
+    ]
+
+  },
+
+  "一期抛跳": {
+
+    "Dataset": "Bump_YIQI",
+
+    "title": "一期抛跳工况",
+
+    "indicators": [
+
+      {
+
+        "label": "前轴垂向位移(mm)",
+
+        "x": {"name":"TimeStep", "unit": "s"},
+
+        "y1": { "name": "Jnc_L1", "unit": "mm"},
+
+        "method": ["VDA"]
+
+      },
+
+      {
+
+        "label": "后轴垂向位移(mm)",
+
+        "x": {"name":"TimeStep", "unit": "s"},
+
+        "y1": {"name":"Jnc_L2", "unit": "mm"},
+
+        "method": ["VDA"]
+
+      },
+
+      {
+
+        "label": "俯仰角速度(deg/s)",
+
+        "x": {"name":"TimeStep", "unit": "s"},
+
+        "y1": {"name":"Avy", "unit": "deg/s"},
+
+        "method": ["VDA"]
+
+      },
+
+      {
+
+        "label": "车身垂向加速度(g)",
+
+        "x": {"name":"TimeStep", "unit": "s"},
+
+        "y1": {"name":"Az", "unit": "g"},
+
+        "method": ["VDA"]
+
+      }
+
+    ]
+
+  },
+
+  "小侧向加速度": {
+
+    "Dataset": "Low g",
+
+    "title": "小侧向加速度",
+
+    "indicators": [
+
+      {
+
+        "label": "线性区转向灵敏度",
+
+        "x": {"name":"Steer_SW", "unit": "deg"},
+
+        "y1": {"name":"Ay", "unit": "g"},
+
+        "method": ["VDA", "方法2"]
+
+
+      }
+
+    ]
+
+  },
+
+  "中心区": {
+
+    "Dataset": "Central Steer",
+
+    "title": "中心区工况",
+
+    "indicators": [
+
+      {
+
+        "label": "最小转向灵敏度(g/100deg)",
+
+        "x": {"name":"Steer_SW", "unit": "deg"},
+
+        "y1": {"name":"Ay", "unit": "g"},
+
+        "method": ["VDA", "方法2","方法3"]
+
+
+      },
+
+      {
+
+        "label": "0.1g转向灵敏度(g/100deg)",
+
+
+        "method": ["VDA", "方法2","方法3"],
+
+        "has_fig": "False"
+
+      },
+
+      {
+
+        "label": "转向死区(deg)",
+
+        "method": ["过零点"],
+
+        "has_fig": "False"
+
+      }
+
+    ]
+
+  },
+
+  "稳态回转": {
+
+    "Dataset":"Steady-State Circle",
+
+    "title": "稳态回转工况",
+
+    "indicators": [
+
+      {
+
+        "label": "0.3g侧倾梯度(deg/g)",
+
+        "x": {"name":"Ay", "unit": "g"},
+
+        "y1": {"name":"Roll", "unit": "deg"},
+
+        "method": ["VDA","方法2: 截取拟合"]
+
+      },
+
+      {
+
+        "label": "传动比(-)",
+
+        "has_fig": "False",
+
+        "method": ["按优先级"]
+
+      },
+
+      {
+
+        "label": "0.3g不足转向度(deg/g)",
+
+        "x": {"name":"Ay", "unit": "g"},
+
+        "y1": {"name":"Steer_SW", "unit": "deg"},
+
+        "method": ["VDA-3次","VDA-多次", "方法3:1次+幂","方法4: 截取拟合"]
+
+      },
+
+      {
+
+        "label": "0.5g不足转向度(deg/g)",
+
+        "method": ["VDA-3次","VDA-多次", "方法3:1次+幂","方法4: 截取拟合"]
+
+
+      },
+
+      {
+
+        "label": "0.7g不足转向度(deg/g)",
+
+        "method": ["VDA-3次","VDA-多次",  "方法3:1次+幂","方法4: 截取拟合"]
+
+
+      },
+
+      {
+
+        "label": "最大侧向加速度(g)",
+
+        "has_fig": "False",
+
+        "method": ["VDA"]
+
+      },
+
+      {
+
+        "label": "质心到前轴距离(m)",
+
+        "has_fig": "False",
+
+        "method": ["Carsim取值"]
+
+
+      },
+
+      {
+
+        "label": "质心到后轴距离(m)",
+
+        "has_fig": "False",
+
+        "method": ["Carsim取值"]
+
+      },
+
+      {
+
+        "label": "前轴等效侧偏柔度(deg/g)",
+
+        "method": ["VDA"]
+
+      },
+
+      {
+
+        "label": "后轴等效侧偏柔度(deg/g)",
+
+        "method": ["VDA"]
+
+      }
+
+    ]
+
+  },
+
+  "跨工况计算": {
+
+    "title": "ZMP",
+
+    "Dataset": "Multi-Condition",
+
+    "indicators": [
+
+      {
+
+        "label": "最大横向ZMP偏移(m)",
+
+        "method": ["内测指标"]
+
+      },
+
+      {
+
+        "label": "侧翻危险指数(%)",
+
+        "method": ["内测指标"]
+
+      }
+
+
+    ]
+
+  }
+
+}
+
+

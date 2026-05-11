@@ -12,7 +12,8 @@ class ActionRegistry:
     def register(self, name: str, description: str,
                  params_schema: dict, callback: callable,
                  category: str = None, risk_level: str = "medium",
-                 exposed: bool = True, side_effects: bool = True):
+                 exposed: bool = True, side_effects: bool = True,
+                 summary_callback: callable = None):
         """
         注册一个 agent 可调用的操作
 
@@ -34,6 +35,7 @@ class ActionRegistry:
             "risk_level": risk_level,
             "exposed": exposed,
             "side_effects": side_effects,
+            "summary_callback": summary_callback,
         }
 
     def get_tools_schema(self) -> list:
@@ -113,6 +115,13 @@ class ActionRegistry:
 
     def format_action_summary(self, name: str, params: dict) -> str:
         """格式化操作摘要，用于确认对话框"""
+        if name in self._actions:
+            summary_callback = self._actions[name].get("summary_callback")
+            if summary_callback is not None:
+                try:
+                    return str(summary_callback(**params))
+                except Exception as e:
+                    return f"{self.get_description(name)}\n摘要生成失败: {e}"
         desc = self.get_description(name)
         param_str = ", ".join(f"{k}={v}" for k, v in params.items())
         return f"【{desc}】\n参数：{param_str}"

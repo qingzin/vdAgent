@@ -24,6 +24,7 @@ from agent.actions import (
     knowledge_actions,
     analysis_actions,
     monitoring_actions,
+    workflow_actions,
 )
 
 
@@ -40,6 +41,7 @@ ACTION_MODULES = [
     knowledge_actions,   # 底盘调校建议
     analysis_actions,    # 历史数据加载/离线分析
     monitoring_actions,  # 报警开关/实时监控
+    workflow_actions,    # 一键实验模板/自动报告
 ]
 
 

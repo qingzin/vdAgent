@@ -29,6 +29,9 @@ from agent.services.visual_service import VisualService
 from agent.services.monitoring_service import MonitoringService
 from agent.services.metadata_service import MetadataService
 from agent.services.analysis_service import AnalysisService
+from agent.services.sim_test_report_service import SimTestReportService
+from agent.services.workflow_template_service import WorkflowTemplateService
+from agent.workflow_panel import WorkflowPanel
 
 
 def attach_agent(main_window, llm_url: str = None):
@@ -54,6 +57,8 @@ def attach_agent(main_window, llm_url: str = None):
     ctx.register_service('monitoring', MonitoringService(ctx))
     ctx.register_service('metadata', MetadataService(ctx))
     ctx.register_service('analysis', AnalysisService(ctx))
+    ctx.register_service('sim_test_report', SimTestReportService(ctx))
+    ctx.register_service('workflow_template', WorkflowTemplateService(ctx))
 
     # 3. 加载 LLM 配置（支持本地/远程切换，持久化到 agent_data/llm_config.json）
     config = LLMConfig()
@@ -74,6 +79,26 @@ def attach_agent(main_window, llm_url: str = None):
     # 4. 聊天面板
     chat_dock = ChatWidget(executor, parent=main_window)
     main_window.addDockWidget(Qt.RightDockWidgetArea, chat_dock)
+
+    # 4b. Agent workflow progress panel. main.py attaches the agent early in
+    # SimulatorUI.__init__, before the tab widget is created, so mount lazily.
+    workflow_panel = WorkflowPanel(parent=main_window)
+
+    def mount_workflow_panel():
+        if getattr(workflow_panel, "_agent_mounted", False):
+            return
+        if hasattr(main_window, 'tabs'):
+            main_window.tabs.addTab(workflow_panel, "Agent实验流程")
+        else:
+            from PyQt5.QtWidgets import QDockWidget
+            workflow_dock = QDockWidget("Agent实验流程", main_window)
+            workflow_dock.setWidget(workflow_panel)
+            main_window.addDockWidget(Qt.LeftDockWidgetArea, workflow_dock)
+            main_window._agent_workflow_dock = workflow_dock
+        workflow_panel._agent_mounted = True
+
+    QTimer.singleShot(0, mount_workflow_panel)
+    ctx.workflow_panel = workflow_panel
 
     # 5. statusBar 上加 toggle 按钮
     toggle_ai_btn = QPushButton("Toggle AI Assistant")
@@ -98,6 +123,7 @@ def attach_agent(main_window, llm_url: str = None):
     main_window._agent_llm_client = llm_client
     main_window._agent_executor = executor
     main_window._agent_chat_dock = chat_dock
+    main_window._agent_workflow_panel = workflow_panel
     main_window._agent_connection_timer = connection_timer
     main_window._agent_toggle_btn = toggle_ai_btn
 
