@@ -120,6 +120,12 @@ class FakeCtx:
             "tuning": self.tuning,
             "sim_test_report": self.report,
         }
+        self.carsim = SimpleNamespace(
+            GetDatasetList=lambda library: [
+                "1:<Dampers>Damper F",
+                "2:<Dampers>Damper R",
+            ] if library == "Suspension: Damper" else []
+        )
 
     def show_workflow_panel(self):
         self.shown = True
@@ -133,6 +139,7 @@ class FakeCtx:
             "springInfoDic": {"Spring F": "", "Spring R": ""},
             "AuxMInfoDic": {"Bar F": "", "Bar R": ""},
             "MxTotInfoDic": {},
+            "carsim": self.carsim,
         }
         return maps.get(name, default)
 
@@ -203,6 +210,7 @@ def test_template_options_and_save_template(tmp_path):
     assert "Car A" in options["vehicles"]
     assert "Spring F" in options["springs"]
     assert "Bar F" in options["antiroll_bars"]
+    assert "Damper F" in options["dampers"]
     assert result["id"] == "new_demo"
     assert (svc.template_dir / "new_demo.json").exists()
 

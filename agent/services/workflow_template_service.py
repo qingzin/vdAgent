@@ -306,17 +306,22 @@ class WorkflowTemplateService(BaseService):
         names = set()
         for dict_name in ("damperInfoDic", "DamperInfoDic", "dmpInfoDic", "DmpInfoDic"):
             names.update(self._ctx.mod(dict_name, {}).keys())
-        for path in self.template_dir.glob("*.json"):
-            try:
-                template = self._read(path)
-            except Exception:
-                continue
-            for cfg in self._configurations(template):
-                if cfg.get("front_damper"):
-                    names.add(cfg["front_damper"])
-                if cfg.get("rear_damper"):
-                    names.add(cfg["rear_damper"])
+        names.update(self._dataset_names("Suspension: Damper"))
         return sorted(names)
+
+    def _dataset_names(self, library: str) -> list:
+        carsim = self._ctx.mod("carsim")
+        if carsim is None or not hasattr(carsim, "GetDatasetList"):
+            return []
+        try:
+            raw_items = carsim.GetDatasetList(library) or []
+        except Exception:
+            return []
+        names = []
+        for item in raw_items:
+            match = re.search(r"(.*):<(.*?)>(.*)", str(item))
+            names.append(match.group(3).strip() if match else str(item).split(":", 1)[-1].strip())
+        return [name for name in names if name]
 
     def _template_id(self, value: str) -> str:
         value = str(value or "").strip().lower()
