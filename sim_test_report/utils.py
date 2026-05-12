@@ -19,24 +19,9 @@ import pandas as pd
 from PyQt5.QtGui import QFontDatabase, QKeySequence, QColor
 
 
-from typing import Optional, List
-
-
-from docx.enum.text import WD_ALIGN_PARAGRAPH
-
-from docx.shared import Cm
-
 from matplotlib import pyplot as plt
 
-from openpyxl.drawing.spreadsheet_drawing import AnchorMarker, OneCellAnchor
-
-from openpyxl.drawing.xdr import XDRPositiveSize2D
-
 import io
-
-from openpyxl.drawing.image import Image as XLImage
-
-from openpyxl.utils import coordinate_to_tuple
 
 
 # --------------------DIL数据处理-----------------------
@@ -284,6 +269,10 @@ def safe_idx(name, cols):
 
 
 def insert_excel_image(ws, fig, anchor, cell_w, cell_h):
+    from openpyxl.drawing.image import Image as XLImage
+    from openpyxl.drawing.spreadsheet_drawing import AnchorMarker, OneCellAnchor
+    from openpyxl.drawing.xdr import XDRPositiveSize2D
+    from openpyxl.utils import coordinate_to_tuple
 
     """
 
@@ -654,6 +643,8 @@ def apply_global_styles(widget):
 
 
 def save_fig_to_word(doc, fig):
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.shared import Cm
 
     buf = io.BytesIO()
 
@@ -672,6 +663,8 @@ def save_fig_to_word(doc, fig):
 
 
 def save_fig_to_cell(cell, fig):
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.shared import Cm
 
     """将 Matplotlib 图像保存并插入到指定的 Word 单元格中"""
 
@@ -699,10 +692,6 @@ def save_fig_to_cell(cell, fig):
     # 记得关闭图释放内存
 
     plt.close(fig)
-
-
-
-
 
 
 

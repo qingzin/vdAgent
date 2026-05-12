@@ -18,6 +18,21 @@ from agent.services._base import BaseService
 
 
 class SimTestReportService(BaseService):
+    BATCH_IMPORTS = {
+        "numpy": "numpy",
+        "pandas": "pandas",
+        "win32com": "pywin32",
+    }
+    REPORT_IMPORTS = {
+        "numpy": "numpy",
+        "pandas": "pandas",
+        "matplotlib": "matplotlib",
+        "scipy": "scipy",
+        "docx": "python-docx",
+        "win32com": "pywin32",
+        "openpyxl": "openpyxl",
+    }
+
     def __init__(self, ctx):
         super().__init__(ctx)
         self.repo_root = Path(__file__).resolve().parents[2]
@@ -44,25 +59,60 @@ class SimTestReportService(BaseService):
         return [k for k in cfg.keys() if k != "common_config"]
 
     def check_environment(self, require_handproc=True) -> tuple[bool, str]:
-        missing = []
-        for pkg in ("numpy", "pandas", "matplotlib", "scipy", "docx", "win32com"):
-            if importlib.util.find_spec(pkg) is None:
-                missing.append(pkg)
-
         cfg = self.runtime_config()
+        missing = self._missing_imports(self.BATCH_IMPORTS)
         handproc_dir = Path(cfg.get("handproc_dir") or "")
         handproc_file = handproc_dir / "handproc.cp311-win_amd64.pyd"
         if require_handproc and not handproc_file.exists():
             missing.append(f"handproc.cp311-win_amd64.pyd ({handproc_dir})")
 
-        if require_handproc and sys.version_info[:2] != (3, 11):
+        if require_handproc and sys.version_info[:2] == (3, 11):
+            missing.extend(self._missing_imports(self.REPORT_IMPORTS))
+        elif require_handproc and sys.version_info[:2] != (3, 11):
             py = cfg.get("python_executable") or ""
-            if not py:
+            if py:
+                missing.extend(self._missing_imports_in_subprocess(py, self.REPORT_IMPORTS))
+            else:
                 missing.append("Python 3.11 executable (report_runtime.json: python_executable)")
 
         if missing:
             return False, "报告/批量仿真环境缺失: " + ", ".join(missing)
         return True, "报告/批量仿真环境检查通过"
+
+    def _missing_imports(self, imports: dict[str, str]) -> list[str]:
+        missing = []
+        for pkg, install_name in imports.items():
+            if importlib.util.find_spec(pkg) is None:
+                missing.append(f"{pkg} (pip install {install_name})")
+        return missing
+
+    def _missing_imports_in_subprocess(self, python_executable: str, imports: dict[str, str]) -> list[str]:
+        code = """
+import importlib.util, json, sys
+imports = json.loads(sys.argv[1])
+missing = []
+for pkg, install_name in imports.items():
+    if importlib.util.find_spec(pkg) is None:
+        missing.append(f"{pkg} (pip install {install_name})")
+print(json.dumps(missing, ensure_ascii=False))
+"""
+        try:
+            proc = subprocess.run(
+                [python_executable, "-c", code, json.dumps(imports, ensure_ascii=False)],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=30,
+            )
+        except Exception as e:
+            return [f"Python 3.11 executable ({python_executable}) 无法执行: {e}"]
+        if proc.returncode != 0:
+            return [f"Python 3.11 executable ({python_executable}) 依赖检查失败: {proc.stderr.strip() or proc.stdout.strip()}"]
+        try:
+            return json.loads(proc.stdout.strip() or "[]")
+        except Exception:
+            return [f"Python 3.11 executable ({python_executable}) 依赖检查输出无法解析"]
 
     def default_output_root(self) -> Path:
         root = Path(self.runtime_config().get("default_output_root") or "")

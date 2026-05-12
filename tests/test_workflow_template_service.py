@@ -262,6 +262,40 @@ def test_report_environment_reports_missing_handproc(tmp_path):
     assert "handproc.cp311-win_amd64.pyd" in msg
 
 
+def test_report_environment_uses_configured_python311_for_report_deps(monkeypatch, tmp_path):
+    ctx = SimpleNamespace(ui=object())
+    svc = SimTestReportService(ctx)
+    handproc_dir = tmp_path / "handproc"
+    handproc_dir.mkdir()
+    (handproc_dir / "handproc.cp311-win_amd64.pyd").write_text("", encoding="utf-8")
+    svc.config_path = tmp_path / "report_runtime.json"
+    svc.config_path.write_text(
+        json.dumps({
+            "handproc_dir": str(handproc_dir),
+            "python_executable": "C:/Python311/python.exe",
+            "default_output_root": str(tmp_path / "reports"),
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(sys := __import__("sys"), "version_info", (3, 10, 0))
+    monkeypatch.setattr(svc, "_missing_imports", lambda imports: [])
+    checked = {}
+
+    def fake_subprocess_check(py, imports):
+        checked["py"] = py
+        checked["imports"] = imports
+        return []
+
+    monkeypatch.setattr(svc, "_missing_imports_in_subprocess", fake_subprocess_check)
+
+    ok, msg = svc.check_environment(require_handproc=True)
+
+    assert ok is True
+    assert checked["py"] == "C:/Python311/python.exe"
+    assert "docx" in checked["imports"]
+    assert "检查通过" in msg
+
+
 def test_report_batch_restores_carsim_after_run(monkeypatch, tmp_path):
     class FakeController:
         restored = False

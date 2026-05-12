@@ -1,2 +1,8 @@
 PyQt5>=5.15
 requests>=2.28
+numpy
+pandas
+matplotlib
+scipy
+python-docx
+pywin32; platform_system == "Windows"
