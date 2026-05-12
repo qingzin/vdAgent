@@ -83,22 +83,41 @@ def attach_agent(main_window, llm_url: str = None):
     # 4b. Agent workflow progress panel. main.py attaches the agent early in
     # SimulatorUI.__init__, before the tab widget is created, so mount lazily.
     workflow_panel = WorkflowPanel(parent=main_window)
+    mount_attempts = {"count": 0}
 
     def mount_workflow_panel():
         if getattr(workflow_panel, "_agent_mounted", False):
             return
         if hasattr(main_window, 'tabs'):
             main_window.tabs.addTab(workflow_panel, "Agent实验流程")
+            workflow_panel._agent_mounted = True
         else:
+            mount_attempts["count"] += 1
+            if mount_attempts["count"] < 50:
+                QTimer.singleShot(100, mount_workflow_panel)
+                return
             from PyQt5.QtWidgets import QDockWidget
             workflow_dock = QDockWidget("Agent实验流程", main_window)
             workflow_dock.setWidget(workflow_panel)
             main_window.addDockWidget(Qt.LeftDockWidgetArea, workflow_dock)
             main_window._agent_workflow_dock = workflow_dock
-        workflow_panel._agent_mounted = True
+            workflow_panel._agent_mounted = True
+
+    def show_workflow_panel():
+        mount_workflow_panel()
+        if hasattr(main_window, 'tabs'):
+            index = main_window.tabs.indexOf(workflow_panel)
+            if index >= 0:
+                main_window.tabs.setCurrentIndex(index)
+        dock = getattr(main_window, "_agent_workflow_dock", None)
+        if dock is not None:
+            dock.show()
+            dock.raise_()
+        workflow_panel.show_workflow()
 
     QTimer.singleShot(0, mount_workflow_panel)
     ctx.workflow_panel = workflow_panel
+    ctx.show_workflow_panel = show_workflow_panel
 
     # 5. statusBar 上加 toggle 按钮
     toggle_ai_btn = QPushButton("Toggle AI Assistant")

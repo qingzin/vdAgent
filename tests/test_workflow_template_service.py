@@ -48,6 +48,22 @@ class FakeTuningService:
         self.calls.append(("bar", is_front, value))
 
 
+class FakePanel:
+    def __init__(self):
+        self.started = None
+        self.events = []
+        self.finished = None
+
+    def start_workflow(self, name, description="", template=None):
+        self.started = (name, description, template)
+
+    def update_workflow_event(self, event):
+        self.events.append(event)
+
+    def finish_workflow(self, success, message, result=None):
+        self.finished = (success, message, result)
+
+
 class FakeReportService:
     def __init__(self, tmp_path):
         self.tmp_path = tmp_path
@@ -65,7 +81,28 @@ class FakeReportService:
     def run_batch_from_template(self, template, progress=None):
         self.executed = template["id"]
         if progress:
-            progress("执行仿真", "mock")
+            progress({
+                "stage_key": "run_simulation",
+                "stage_title": "执行仿真",
+                "status": "done",
+                "message": "mock",
+                "progress": 80,
+            })
+            progress({
+                "stage_key": "restore_carsim",
+                "stage_title": "恢复 CarSim",
+                "status": "done",
+                "message": "mock restore",
+                "progress": 85,
+            })
+            progress({
+                "stage_key": "generate_report",
+                "stage_title": "生成报告",
+                "status": "done",
+                "message": "mock report",
+                "progress": 96,
+                "report_path": str(self.tmp_path / "reports" / "run" / "report.docx"),
+            })
         return {
             "result_folder": str(self.tmp_path / "reports" / "run"),
             "report_path": str(self.tmp_path / "reports" / "run" / "report.docx"),
@@ -77,10 +114,15 @@ class FakeCtx:
         self.ui = FakeUi()
         self.tuning = FakeTuningService()
         self.report = FakeReportService(tmp_path)
+        self.workflow_panel = FakePanel()
+        self.shown = False
         self.services = {
             "tuning": self.tuning,
             "sim_test_report": self.report,
         }
+
+    def show_workflow_panel(self):
+        self.shown = True
 
     def service(self, name):
         return self.services[name]
@@ -137,7 +179,7 @@ def test_template_preview_contains_confirmation_risk_summary(tmp_path):
     assert "工况数量: 2" in summary
     assert "阻尼配置: Demo: 前[Damper F] / 后[Damper R]" in summary
     assert "执行后恢复 CarSim 配置: 是" in summary
-    assert "风险: 将切换车型/悬架配置并执行批量 CarSim 仿真。" in summary
+    assert "风险: 将切换车型和悬架配置" in summary
 
 
 def test_unknown_plot_channel_is_rejected(tmp_path):
@@ -149,12 +191,13 @@ def test_unknown_plot_channel_is_rejected(tmp_path):
         svc.load_template("demo")
 
 
-def test_execute_template_applies_setup_plots_and_runs_report(tmp_path):
+def test_execute_template_applies_setup_plots_runs_report_and_shows_panel(tmp_path):
     svc, ctx = build_service(tmp_path)
 
     result = svc.execute("demo")
 
     assert "模板执行完成" in result
+    assert ctx.shown is True
     assert ctx.tuning.calls == [
         ("vehicle", "Car A"),
         ("front_spring", "Spring F"),
@@ -166,6 +209,27 @@ def test_execute_template_applies_setup_plots_and_runs_report(tmp_path):
     assert ctx.ui.plot_switches["pitch"].checked is True
     assert ctx.ui.plot_layout_updated is True
     assert ctx.report.executed == "demo"
+
+
+def test_execute_template_emits_structured_stage_order(tmp_path):
+    svc, ctx = build_service(tmp_path)
+
+    svc.execute("demo")
+
+    keys = [event["stage_key"] for event in ctx.workflow_panel.events]
+    assert keys[:5] == [
+        "load_template",
+        "validate_environment",
+        "validate_environment",
+        "apply_configuration",
+        "apply_configuration",
+    ]
+    assert "set_plots" in keys
+    assert "run_simulation" in keys
+    assert "restore_carsim" in keys
+    assert "generate_report" in keys
+    assert keys[-1] == "complete"
+    assert ctx.workflow_panel.finished[0] is True
 
 
 def test_workflow_action_uses_template_summary_callback(tmp_path):
@@ -250,6 +314,7 @@ def test_report_batch_restores_carsim_after_run(monkeypatch, tmp_path):
             "角阶跃": {"Dataset": "Step"},
         },
     )
+
     def fake_generate_report(self, result_folder, selected_procedures=None):
         report_path = Path(result_folder) / "report.docx"
         report_path.write_text("mock report", encoding="utf-8")
@@ -260,11 +325,7 @@ def test_report_batch_restores_carsim_after_run(monkeypatch, tmp_path):
         "generate_report",
         fake_generate_report,
     )
-
-    def fake_prepare_import_path(self):
-        pass
-
-    monkeypatch.setattr(sim_report_module.SimTestReportService, "_prepare_import_path", fake_prepare_import_path)
+    monkeypatch.setattr(sim_report_module.SimTestReportService, "_prepare_import_path", lambda self: None)
     monkeypatch.setitem(__import__("sys").modules, "control_carsim", SimpleNamespace(
         ControlCarsim=FakeController,
         sanitize_filename=lambda value: value,
@@ -282,10 +343,13 @@ def test_report_batch_restores_carsim_after_run(monkeypatch, tmp_path):
     )
     template = valid_template()
     template["procedures"] = ["角阶跃"]
+    events = []
 
-    result = svc.run_batch_from_template(template)
+    result = svc.run_batch_from_template(template, progress=lambda event: events.append(event))
 
     assert result["restored_carsim"] is True
     assert FakeController.restored is True
     assert ("F", "Damper F") in FakeController.damper_calls
     assert ("R", "Damper R") in FakeController.damper_calls
+    assert any(e["stage_key"] == "restore_carsim" and e["status"] == "done" for e in events)
+    assert any(e["stage_key"] == "generate_report" and e["status"] == "done" for e in events)

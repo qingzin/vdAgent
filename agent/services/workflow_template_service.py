@@ -1,8 +1,11 @@
 """Workflow template loading, validation and execution."""
 
+from __future__ import annotations
+
 import json
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from agent.actions._helpers import fuzzy_resolve
 from agent.actions.plot_actions import PLOT_CHANNELS
@@ -29,6 +32,17 @@ class WorkflowTemplateService(BaseService):
         "plot_channels",
         "report",
         "keep_final_configuration",
+    }
+
+    STAGE_TITLES = {
+        "load_template": "加载模板",
+        "validate_environment": "环境校验",
+        "apply_configuration": "应用配置",
+        "set_plots": "设置波形",
+        "run_simulation": "执行仿真",
+        "restore_carsim": "恢复 CarSim",
+        "generate_report": "生成报告",
+        "complete": "完成",
     }
 
     def __init__(self, ctx):
@@ -84,46 +98,78 @@ class WorkflowTemplateService(BaseService):
             f"预计输出目录: {output_root}\\<时间戳>",
             f"报告生成: {'开启' if report_enabled else '关闭'}",
             f"执行后恢复 CarSim 配置: {'否，保留最终配置' if template.get('keep_final_configuration') else '是'}",
-            "风险: 将切换车型/悬架配置并执行批量 CarSim 仿真。",
+            "风险: 将切换车型和悬架配置，执行批量 CarSim 仿真，并在结束后恢复 CarSim 配置。",
         ]
         return "\n".join(lines)
 
     def execute(self, template_id: str) -> str:
-        template = self.load_template(template_id)
         panel = getattr(self._ctx, "workflow_panel", None)
+        show_panel = getattr(self._ctx, "show_workflow_panel", None)
+        if callable(show_panel):
+            show_panel()
 
-        self._panel_call(panel, "start_workflow", template["name"], template["description"])
-        self._emit(panel, "加载模板", f"{template['id']} | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        current_stage = "load_template"
+        template = self.load_template(template_id)
+        self._panel_call(panel, "start_workflow", template["name"], template["description"], template)
+        self._emit(
+            panel,
+            "load_template",
+            status="done",
+            message=f"{template['id']} | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            progress=10,
+        )
 
         try:
-            self._emit(panel, "校验环境", "检查模板、报告配置和依赖")
+            current_stage = "validate_environment"
+            self._emit(panel, current_stage, status="running", message="检查模板、报告配置和依赖", progress=15)
             self.validate(template)
             report_service = self._ctx.service("sim_test_report")
             require_handproc = bool(template.get("report", {}).get("enabled", True))
             ok, msg = report_service.check_environment(require_handproc=require_handproc)
             if not ok:
                 raise WorkflowTemplateError(msg)
-            self._emit(panel, "校验环境", msg)
+            self._emit(panel, current_stage, status="done", message=msg, progress=25)
 
-            self._emit(panel, "应用车辆配置", "切换车型、弹簧、阻尼和稳定杆")
+            current_stage = "apply_configuration"
+            self._emit(
+                panel,
+                current_stage,
+                status="running",
+                message="切换车型、弹簧、稳定杆；阻尼将在批量仿真中应用",
+                progress=30,
+                payload={"current_configuration": self._configurations(template)[0]},
+            )
             for cfg in self._configurations(template):
                 self._apply_ui_configuration(cfg)
+            self._emit(panel, current_stage, status="done", message="车辆配置已应用", progress=38)
 
-            self._emit(panel, "设置波形显示", ", ".join(template.get("plot_channels", [])))
-            self._apply_plot_channels(template.get("plot_channels", []))
+            current_stage = "set_plots"
+            channels = template.get("plot_channels", [])
+            self._emit(panel, current_stage, status="running", message=", ".join(channels), progress=42)
+            self._apply_plot_channels(channels)
+            self._emit(panel, current_stage, status="done", message="波形通道已显示", progress=45)
 
-            def progress(stage, message):
-                self._emit(panel, stage, message)
+            current_stage = "run_simulation"
+            self._emit(panel, current_stage, status="running", message="开始批量仿真", progress=50)
+
+            def progress(event_or_stage: Any, message: str | None = None):
+                if isinstance(event_or_stage, dict):
+                    self._emit_from_event(panel, event_or_stage)
+                    return
+                key = self._stage_key_from_title(str(event_or_stage))
+                self._emit(panel, key, title=str(event_or_stage), status="running", message=message or "")
 
             result = report_service.run_batch_from_template(template, progress=progress)
             final_msg = (
                 f"模板执行完成。\n结果目录: {result['result_folder']}\n"
                 f"报告: {result.get('report_path') or '未生成'}"
             )
+            self._emit(panel, "complete", status="done", message="流程完成", progress=100, payload=result)
             self._panel_call(panel, "finish_workflow", True, final_msg, result)
             return final_msg
         except Exception as e:
             msg = f"模板执行失败: {e}"
+            self._emit(panel, current_stage, status="failed", message=str(e))
             self._panel_call(panel, "finish_workflow", False, msg, {})
             return msg
 
@@ -235,8 +281,66 @@ class WorkflowTemplateService(BaseService):
     def _read(self, path: Path) -> dict:
         return json.loads(path.read_text(encoding="utf-8"))
 
-    def _emit(self, panel, stage: str, message: str):
-        self._panel_call(panel, "append_stage", stage, message)
+    def _emit(
+        self,
+        panel,
+        stage_key: str,
+        *,
+        title: str | None = None,
+        status: str = "running",
+        message: str = "",
+        progress: int | None = None,
+        payload: dict | None = None,
+    ):
+        event = {
+            "stage_key": stage_key,
+            "stage_title": title or self.STAGE_TITLES.get(stage_key, stage_key),
+            "status": status,
+            "message": message,
+            "progress": progress,
+        }
+        if payload:
+            event.update(payload)
+        if panel is None:
+            return
+        if hasattr(panel, "update_workflow_event"):
+            panel.update_workflow_event(event)
+        elif hasattr(panel, "update_stage"):
+            panel.update_stage(
+                event["stage_key"],
+                title=event["stage_title"],
+                status=event["status"],
+                message=event["message"],
+                progress=event["progress"],
+                payload=event,
+            )
+        else:
+            self._panel_call(panel, "append_stage", event["stage_title"], event["message"])
+
+    def _emit_from_event(self, panel, event: dict):
+        key = event.get("stage_key") or event.get("key") or self._stage_key_from_title(event.get("stage_title", ""))
+        self._emit(
+            panel,
+            key,
+            title=event.get("stage_title") or event.get("title"),
+            status=event.get("status") or "running",
+            message=event.get("message") or "",
+            progress=event.get("progress"),
+            payload=event,
+        )
+
+    def _stage_key_from_title(self, title: str) -> str:
+        for key, known_title in self.STAGE_TITLES.items():
+            if title == known_title:
+                return key
+        aliases = {
+            "配置车辆": "apply_configuration",
+            "应用车辆配置": "apply_configuration",
+            "校验环境": "validate_environment",
+            "设置波形显示": "set_plots",
+            "恢复CarSim": "restore_carsim",
+        }
+        return aliases.get(title, "run_simulation")
 
     def _panel_call(self, panel, method: str, *args):
         if panel is None:

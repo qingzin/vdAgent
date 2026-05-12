@@ -4,9 +4,10 @@ The service keeps the binary handproc dependency outside the repository and
 loads the report code only when a report action is actually executed.
 """
 
+from __future__ import annotations
+
 import importlib.util
 import json
-import os
 import re
 import subprocess
 import sys
@@ -100,6 +101,7 @@ class SimTestReportService(BaseService):
         controller = None
         configurations = self._template_configurations(template)
         restore_after_run = not bool(template.get("keep_final_configuration", False))
+        report_path = None
 
         try:
             controller = ControlCarsim()
@@ -109,9 +111,20 @@ class SimTestReportService(BaseService):
             controller.proc_cate = common.get("Procedure_Category", "")
 
             self._write_model_info(run_dir, configurations)
+            total_runs = max(1, len(configurations) * len(procedures))
+            completed_runs = 0
 
             for idx, cfg in enumerate(configurations, 1):
-                self._notify(progress, "配置车辆", f"{idx}/{len(configurations)} {cfg['name']}")
+                self._notify(
+                    progress,
+                    "apply_configuration",
+                    "应用配置",
+                    status="running",
+                    message=f"{idx}/{len(configurations)} {cfg['name']}",
+                    progress_value=45,
+                    current_configuration=cfg,
+                    result_folder=str(run_dir),
+                )
                 vehicle = cfg["vehicle"]
                 vehicle_cat = cfg.get("vehicle_category") or self._resolve_vehicle_category(vehicle)
                 if not controller.change_vehicle(vehicle, vehicle_cat):
@@ -125,13 +138,34 @@ class SimTestReportService(BaseService):
                     pass
 
                 self._apply_controller_parts(controller, cfg)
+                self._notify(
+                    progress,
+                    "apply_configuration",
+                    "应用配置",
+                    status="done" if idx == len(configurations) else "running",
+                    message=f"{cfg['name']} 配置已写入 CarSim",
+                    progress_value=48,
+                    current_configuration=cfg,
+                    result_folder=str(run_dir),
+                )
 
                 for proc_idx, proc_name in enumerate(procedures, 1):
                     info = configs.get(proc_name)
                     if not info:
                         raise RuntimeError(f"未知报告工况: {proc_name}")
                     proc_ds = info.get("Dataset")
-                    self._notify(progress, "执行仿真", f"{cfg['name']} | {proc_idx}/{len(procedures)} {proc_name}")
+                    start_progress = 50 + int(completed_runs / total_runs * 30)
+                    self._notify(
+                        progress,
+                        "run_simulation",
+                        "执行仿真",
+                        status="running",
+                        message=f"{cfg['name']} | {proc_idx}/{len(procedures)} {proc_name}",
+                        progress_value=start_progress,
+                        current_configuration=cfg,
+                        current_procedure=proc_name,
+                        result_folder=str(run_dir),
+                    )
                     if not controller.change_procedure(proc_ds):
                         raise RuntimeError(f"切换工况失败: {proc_name} ({proc_ds})")
                     success = controller.execute_simulation()
@@ -142,10 +176,33 @@ class SimTestReportService(BaseService):
                     if not success:
                         raise RuntimeError(f"仿真失败: {cfg['name']} / {proc_name}")
                     controller.rename_carsim_output_csv(str(car_dir), proc_name)
+                    completed_runs += 1
+                    self._notify(
+                        progress,
+                        "run_simulation",
+                        "执行仿真",
+                        status="running" if completed_runs < total_runs else "done",
+                        message=f"完成 {cfg['name']} / {proc_name}",
+                        progress_value=50 + int(completed_runs / total_runs * 30),
+                        current_configuration=cfg,
+                        current_procedure=proc_name,
+                        result_folder=str(run_dir),
+                    )
 
-            report_path = None
+            if restore_after_run and controller is not None:
+                self._recover_controller(controller, progress)
+                controller = None
+
             if template.get("report", {}).get("enabled", True):
-                self._notify(progress, "生成报告", str(run_dir))
+                self._notify(
+                    progress,
+                    "generate_report",
+                    "生成报告",
+                    status="running",
+                    message=str(run_dir),
+                    progress_value=88,
+                    result_folder=str(run_dir),
+                )
                 report_result = self.generate_report(str(run_dir), selected_procedures=procedures)
                 if (
                     report_result.startswith("报告/批量仿真环境缺失")
@@ -155,6 +212,26 @@ class SimTestReportService(BaseService):
                 ):
                     raise RuntimeError(report_result)
                 report_path = report_result
+                self._notify(
+                    progress,
+                    "generate_report",
+                    "生成报告",
+                    status="done",
+                    message=report_path,
+                    progress_value=96,
+                    result_folder=str(run_dir),
+                    report_path=report_path,
+                )
+            else:
+                self._notify(
+                    progress,
+                    "generate_report",
+                    "生成报告",
+                    status="done",
+                    message="模板未开启报告生成",
+                    progress_value=96,
+                    result_folder=str(run_dir),
+                )
 
             return {
                 "result_folder": str(run_dir),
@@ -165,8 +242,7 @@ class SimTestReportService(BaseService):
             }
         finally:
             if controller is not None and restore_after_run:
-                self._notify(progress, "恢复CarSim", "正在恢复模板执行前的 CarSim 链接配置")
-                controller.recover_dataset()
+                self._recover_controller(controller, progress)
 
     def _generate_report_in_process(self, result_path: Path, selected_procedures=None) -> str:
         cfg = self.runtime_config()
@@ -190,7 +266,6 @@ class SimTestReportService(BaseService):
 
         code = r"""
 import json, sys
-from pathlib import Path
 result, sim_dir, handproc_dir, selected = sys.argv[1:5]
 if handproc_dir:
     sys.path.insert(0, handproc_dir)
@@ -281,6 +356,58 @@ print(out or "")
             )
         (run_dir / "model_info.txt").write_text("\n".join(lines), encoding="utf-8")
 
-    def _notify(self, progress, stage: str, message: str):
-        if progress:
-            progress(stage, message)
+    def _recover_controller(self, controller, progress=None):
+        self._notify(
+            progress,
+            "restore_carsim",
+            "恢复 CarSim",
+            status="running",
+            message="正在恢复模板执行前的 CarSim 链接配置",
+            progress_value=82,
+        )
+        try:
+            controller.recover_dataset()
+        except Exception as e:
+            self._notify(
+                progress,
+                "restore_carsim",
+                "恢复 CarSim",
+                status="failed",
+                message=str(e),
+                progress_value=82,
+            )
+            raise
+        self._notify(
+            progress,
+            "restore_carsim",
+            "恢复 CarSim",
+            status="done",
+            message="CarSim 已恢复",
+            progress_value=85,
+        )
+
+    def _notify(
+        self,
+        progress,
+        stage_key: str,
+        stage_title: str,
+        *,
+        status: str = "running",
+        message: str = "",
+        progress_value: int | None = None,
+        **payload,
+    ):
+        if not progress:
+            return
+        event = {
+            "stage_key": stage_key,
+            "stage_title": stage_title,
+            "status": status,
+            "message": message,
+            "progress": progress_value,
+        }
+        event.update(payload)
+        try:
+            progress(event)
+        except TypeError:
+            progress(stage_title, message)
