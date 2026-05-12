@@ -6,6 +6,8 @@
   "vehicle_category": "",
   "front_spring": "请替换为前弹簧 Dataset 名称",
   "rear_spring": "请替换为后弹簧 Dataset 名称",
+  "front_damper": "请替换为前阻尼 Dataset 名称",
+  "rear_damper": "请替换为后阻尼 Dataset 名称",
   "front_antiroll_bar": "请替换为前稳定杆 Dataset 名称",
   "rear_antiroll_bar": "请替换为后稳定杆 Dataset 名称",
   "simulink_model": "",

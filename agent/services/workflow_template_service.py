@@ -21,6 +21,8 @@ class WorkflowTemplateService(BaseService):
         "vehicle",
         "front_spring",
         "rear_spring",
+        "front_damper",
+        "rear_damper",
         "front_antiroll_bar",
         "rear_antiroll_bar",
         "procedures",
@@ -77,6 +79,7 @@ class WorkflowTemplateService(BaseService):
             f"说明: {template.get('description', '')}",
             f"配置数量: {len(configurations)}",
             f"工况数量: {len(procedures)}，工况: {', '.join(procedures)}",
+            f"阻尼配置: {self._format_damper_summary(configurations)}",
             f"波形通道: {', '.join(template.get('plot_channels', []))}",
             f"预计输出目录: {output_root}\\<时间戳>",
             f"报告生成: {'开启' if report_enabled else '关闭'}",
@@ -102,7 +105,7 @@ class WorkflowTemplateService(BaseService):
                 raise WorkflowTemplateError(msg)
             self._emit(panel, "校验环境", msg)
 
-            self._emit(panel, "应用车辆配置", "切换车型、弹簧和稳定杆")
+            self._emit(panel, "应用车辆配置", "切换车型、弹簧、阻尼和稳定杆")
             for cfg in self._configurations(template):
                 self._apply_ui_configuration(cfg)
 
@@ -202,6 +205,8 @@ class WorkflowTemplateService(BaseService):
             "vehicle_category": template.get("vehicle_category"),
             "front_spring": template["front_spring"],
             "rear_spring": template["rear_spring"],
+            "front_damper": template["front_damper"],
+            "rear_damper": template["rear_damper"],
             "front_antiroll_bar": template["front_antiroll_bar"],
             "rear_antiroll_bar": template["rear_antiroll_bar"],
             "simulink_model": template.get("simulink_model", ""),
@@ -217,6 +222,15 @@ class WorkflowTemplateService(BaseService):
             "report_enabled": bool(template.get("report", {}).get("enabled", False)),
             "valid": True,
         }
+
+    def _format_damper_summary(self, configurations: list) -> str:
+        parts = []
+        for cfg in configurations:
+            parts.append(
+                f"{cfg.get('name', cfg.get('vehicle', '配置'))}: "
+                f"前[{cfg.get('front_damper', '')}] / 后[{cfg.get('rear_damper', '')}]"
+            )
+        return "; ".join(parts)
 
     def _read(self, path: Path) -> dict:
         return json.loads(path.read_text(encoding="utf-8"))

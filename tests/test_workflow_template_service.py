@@ -103,6 +103,8 @@ def valid_template():
         "vehicle": "Car A",
         "front_spring": "Spring F",
         "rear_spring": "Spring R",
+        "front_damper": "Damper F",
+        "rear_damper": "Damper R",
         "front_antiroll_bar": "Bar F",
         "rear_antiroll_bar": "Bar R",
         "procedures": ["角阶跃", "稳态回转"],
@@ -133,6 +135,7 @@ def test_template_preview_contains_confirmation_risk_summary(tmp_path):
     assert "一键实验模板: Demo (demo)" in summary
     assert "配置数量: 1" in summary
     assert "工况数量: 2" in summary
+    assert "阻尼配置: Demo: 前[Damper F] / 后[Damper R]" in summary
     assert "执行后恢复 CarSim 配置: 是" in summary
     assert "风险: 将切换车型/悬架配置并执行批量 CarSim 仿真。" in summary
 
@@ -198,6 +201,7 @@ def test_report_environment_reports_missing_handproc(tmp_path):
 def test_report_batch_restores_carsim_after_run(monkeypatch, tmp_path):
     class FakeController:
         restored = False
+        damper_calls = []
 
         def create_test_dataset(self):
             pass
@@ -213,6 +217,9 @@ def test_report_batch_restores_carsim_after_run(monkeypatch, tmp_path):
 
         def change_crnt_arb(self, *args):
             pass
+
+        def change_crnt_dmp(self, *args):
+            FakeController.damper_calls.append(args)
 
         def change_procedure(self, proc):
             return True
@@ -280,3 +287,5 @@ def test_report_batch_restores_carsim_after_run(monkeypatch, tmp_path):
 
     assert result["restored_carsim"] is True
     assert FakeController.restored is True
+    assert ("F", "Damper F") in FakeController.damper_calls
+    assert ("R", "Damper R") in FakeController.damper_calls

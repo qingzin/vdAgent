@@ -240,6 +240,8 @@ print(out or "")
             "vehicle_category": template.get("vehicle_category"),
             "front_spring": template.get("front_spring"),
             "rear_spring": template.get("rear_spring"),
+            "front_damper": template.get("front_damper"),
+            "rear_damper": template.get("rear_damper"),
             "front_antiroll_bar": template.get("front_antiroll_bar"),
             "rear_antiroll_bar": template.get("rear_antiroll_bar"),
             "simulink_model": template.get("simulink_model", ""),
@@ -256,6 +258,10 @@ print(out or "")
             controller.change_crnt_spring("F", cfg["front_spring"])
         if cfg.get("rear_spring"):
             controller.change_crnt_spring("R", cfg["rear_spring"])
+        if cfg.get("front_damper"):
+            controller.change_crnt_dmp("F", cfg["front_damper"])
+        if cfg.get("rear_damper"):
+            controller.change_crnt_dmp("R", cfg["rear_damper"])
         if cfg.get("front_antiroll_bar"):
             controller.change_crnt_arb("F", cfg["front_antiroll_bar"])
         if cfg.get("rear_antiroll_bar"):
@@ -269,6 +275,7 @@ print(out or "")
             lines.append(
                 f"{cfg.get('name')}: 车型[{cfg.get('vehicle')}] | "
                 f"弹簧[{cfg.get('front_spring')}/{cfg.get('rear_spring')}] | "
+                f"阻尼[{cfg.get('front_damper')}/{cfg.get('rear_damper')}] | "
                 f"稳定杆[{cfg.get('front_antiroll_bar')}/{cfg.get('rear_antiroll_bar')}] | "
                 f"联合仿真模型[{cfg.get('simulink_model', '')}]"
             )
