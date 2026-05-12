@@ -191,6 +191,22 @@ def test_unknown_plot_channel_is_rejected(tmp_path):
         svc.load_template("demo")
 
 
+def test_template_options_and_save_template(tmp_path):
+    svc, _ = build_service(tmp_path)
+    template = valid_template()
+    template["id"] = ""
+    template["name"] = "New Demo"
+
+    options = svc.template_options()
+    result = svc.save_template(template)
+
+    assert "Car A" in options["vehicles"]
+    assert "Spring F" in options["springs"]
+    assert "Bar F" in options["antiroll_bars"]
+    assert result["id"] == "new_demo"
+    assert (svc.template_dir / "new_demo.json").exists()
+
+
 def test_execute_template_applies_setup_plots_runs_report_and_shows_panel(tmp_path):
     svc, ctx = build_service(tmp_path)
 

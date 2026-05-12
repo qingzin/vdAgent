@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -66,6 +67,38 @@ class WorkflowTemplateService(BaseService):
                     "valid": False,
                 })
         return templates
+
+    def template_options(self) -> dict:
+        """Return selectable values used by the template manager panel."""
+        return {
+            "vehicles": sorted(self._ctx.mod("vehicleInfoDic", {}).keys()),
+            "springs": sorted(self._ctx.mod("springInfoDic", {}).keys()),
+            "antiroll_bars": sorted({
+                *self._ctx.mod("AuxMInfoDic", {}).keys(),
+                *self._ctx.mod("MxTotInfoDic", {}).keys(),
+            }),
+            "dampers": self._damper_options(),
+            "procedures": self._ctx.service("sim_test_report").available_procedures(),
+            "plot_channels": [
+                {"key": key, "label": label}
+                for key, label in PLOT_CHANNELS.items()
+            ],
+        }
+
+    def save_template(self, template: dict) -> dict:
+        template = dict(template)
+        template["id"] = self._template_id(template.get("id") or template.get("name") or "workflow")
+        template.setdefault("description", "")
+        template.setdefault("vehicle_category", "")
+        template.setdefault("simulink_model", "")
+        template.setdefault("report", {"enabled": True})
+        template.setdefault("keep_final_configuration", False)
+        self.validate(template)
+        path = self.template_dir / f"{template['id']}.json"
+        path.write_text(json.dumps(template, ensure_ascii=False, indent=2), encoding="utf-8")
+        summary = self._summary_dict(template)
+        summary["path"] = str(path)
+        return summary
 
     def load_template(self, template_id: str) -> dict:
         path = self.template_dir / f"{template_id}.json"
@@ -268,6 +301,29 @@ class WorkflowTemplateService(BaseService):
             "report_enabled": bool(template.get("report", {}).get("enabled", False)),
             "valid": True,
         }
+
+    def _damper_options(self) -> list:
+        names = set()
+        for dict_name in ("damperInfoDic", "DamperInfoDic", "dmpInfoDic", "DmpInfoDic"):
+            names.update(self._ctx.mod(dict_name, {}).keys())
+        for path in self.template_dir.glob("*.json"):
+            try:
+                template = self._read(path)
+            except Exception:
+                continue
+            for cfg in self._configurations(template):
+                if cfg.get("front_damper"):
+                    names.add(cfg["front_damper"])
+                if cfg.get("rear_damper"):
+                    names.add(cfg["rear_damper"])
+        return sorted(names)
+
+    def _template_id(self, value: str) -> str:
+        value = str(value or "").strip().lower()
+        value = re.sub(r"\s+", "_", value)
+        value = re.sub(r"[^0-9a-zA-Z_\-\u4e00-\u9fff]+", "_", value)
+        value = value.strip("_-")
+        return value or f"workflow_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
     def _format_damper_summary(self, configurations: list) -> str:
         parts = []

@@ -32,6 +32,7 @@ from agent.services.analysis_service import AnalysisService
 from agent.services.sim_test_report_service import SimTestReportService
 from agent.services.workflow_template_service import WorkflowTemplateService
 from agent.workflow_panel import WorkflowPanel
+from agent.workflow_template_manager_panel import WorkflowTemplateManagerPanel
 
 
 def attach_agent(main_window, llm_url: str = None):
@@ -83,7 +84,9 @@ def attach_agent(main_window, llm_url: str = None):
     # 4b. Agent workflow progress panel. main.py attaches the agent early in
     # SimulatorUI.__init__, before the tab widget is created, so mount lazily.
     workflow_panel = WorkflowPanel(parent=main_window)
+    template_manager_panel = WorkflowTemplateManagerPanel(ctx, parent=main_window)
     mount_attempts = {"count": 0}
+    template_manager_mount_attempts = {"count": 0}
 
     def mount_workflow_panel():
         if getattr(workflow_panel, "_agent_mounted", False):
@@ -115,8 +118,28 @@ def attach_agent(main_window, llm_url: str = None):
             dock.raise_()
         workflow_panel.show_workflow()
 
+    def mount_template_manager_panel():
+        if getattr(template_manager_panel, "_agent_mounted", False):
+            return
+        if hasattr(main_window, 'tabs'):
+            main_window.tabs.addTab(template_manager_panel, "Agent模板管理")
+            template_manager_panel._agent_mounted = True
+        else:
+            template_manager_mount_attempts["count"] += 1
+            if template_manager_mount_attempts["count"] < 50:
+                QTimer.singleShot(100, mount_template_manager_panel)
+                return
+            from PyQt5.QtWidgets import QDockWidget
+            template_manager_dock = QDockWidget("Agent模板管理", main_window)
+            template_manager_dock.setWidget(template_manager_panel)
+            main_window.addDockWidget(Qt.LeftDockWidgetArea, template_manager_dock)
+            main_window._agent_template_manager_dock = template_manager_dock
+            template_manager_panel._agent_mounted = True
+
     QTimer.singleShot(0, mount_workflow_panel)
+    QTimer.singleShot(0, mount_template_manager_panel)
     ctx.workflow_panel = workflow_panel
+    ctx.template_manager_panel = template_manager_panel
     ctx.show_workflow_panel = show_workflow_panel
 
     # 5. statusBar 上加 toggle 按钮
@@ -143,6 +166,7 @@ def attach_agent(main_window, llm_url: str = None):
     main_window._agent_executor = executor
     main_window._agent_chat_dock = chat_dock
     main_window._agent_workflow_panel = workflow_panel
+    main_window._agent_template_manager_panel = template_manager_panel
     main_window._agent_connection_timer = connection_timer
     main_window._agent_toggle_btn = toggle_ai_btn
 
