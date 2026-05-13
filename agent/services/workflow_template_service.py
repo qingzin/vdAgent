@@ -71,7 +71,7 @@ class WorkflowTemplateService(BaseService):
     def template_options(self) -> dict:
         """Return selectable values used by the template manager panel."""
         return {
-            "vehicles": sorted(self._ctx.mod("vehicleInfoDic", {}).keys()),
+            "vehicles": self.vehicle_options(),
             "springs": sorted(self._ctx.mod("springInfoDic", {}).keys()),
             "antiroll_bars": sorted({
                 *self._ctx.mod("AuxMInfoDic", {}).keys(),
@@ -84,6 +84,47 @@ class WorkflowTemplateService(BaseService):
                 for key, label in PLOT_CHANNELS.items()
             ],
         }
+
+    def vehicle_options(self) -> list[dict]:
+        vehicles = []
+        for name, raw in self._ctx.mod("vehicleInfoDic", {}).items():
+            match = re.search(r"(.*):<(.*?)>(.*)", str(raw))
+            vehicles.append({
+                "name": name,
+                "category": match.group(2).strip() if match else "",
+                "raw": str(raw),
+            })
+        return sorted(vehicles, key=lambda item: (item["category"], item["name"]))
+
+    def vehicle_component_options(self, vehicle: str, vehicle_category: str = "") -> dict:
+        """Return vehicle-specific component lists using ControlCarsim logic."""
+        controller = self._create_carsim_controller()
+        if controller is None:
+            raise WorkflowTemplateError("无法连接 CarSim，不能按车型加载适配部件")
+        try:
+            if not controller.change_vehicle(vehicle, vehicle_category):
+                raise WorkflowTemplateError(f"切换车型失败: {vehicle}")
+            f_spr, crnt_f_spr = controller.get_crnt_spring("F")
+            r_spr, crnt_r_spr = controller.get_crnt_spring("R")
+            f_dmp, crnt_f_dmp = controller.get_crnt_dmp("F")
+            r_dmp, crnt_r_dmp = controller.get_crnt_dmp("R")
+            f_bar, crnt_f_bar = controller.get_crnt_arb("F")
+            r_bar, crnt_r_bar = controller.get_crnt_arb("R")
+            simulink, crnt_simulink = controller.get_crnt_simulink()
+            return {
+                "front_springs": self._with_ori(f_spr, crnt_f_spr),
+                "rear_springs": self._with_ori(r_spr, crnt_r_spr),
+                "front_dampers": self._with_ori(f_dmp, crnt_f_dmp),
+                "rear_dampers": self._with_ori(r_dmp, crnt_r_dmp),
+                "front_antiroll_bars": self._with_ori(f_bar, crnt_f_bar),
+                "rear_antiroll_bars": self._with_ori(r_bar, crnt_r_bar),
+                "simulink_models": self._with_ori(simulink, crnt_simulink),
+            }
+        finally:
+            try:
+                controller.recover_dataset()
+            except Exception:
+                pass
 
     def save_template(self, template: dict) -> dict:
         template = dict(template)
@@ -322,6 +363,27 @@ class WorkflowTemplateService(BaseService):
             match = re.search(r"(.*):<(.*?)>(.*)", str(item))
             names.append(match.group(3).strip() if match else str(item).split(":", 1)[-1].strip())
         return [name for name in names if name]
+
+    def _create_carsim_controller(self):
+        try:
+            self._ctx.service("sim_test_report")._prepare_import_path()
+            from control_carsim import ControlCarsim
+            return ControlCarsim()
+        except Exception:
+            return None
+
+    def _with_ori(self, items: list, current: str | list | None) -> list:
+        values = ["ori"]
+        values.extend([str(item) for item in items if str(item)])
+        if isinstance(current, list):
+            values.extend([str(item) for item in current if str(item)])
+        elif current:
+            values.append(str(current))
+        deduped = []
+        for value in values:
+            if value not in deduped:
+                deduped.append(value)
+        return deduped
 
     def _template_id(self, value: str) -> str:
         value = str(value or "").strip().lower()

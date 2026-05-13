@@ -207,12 +207,48 @@ def test_template_options_and_save_template(tmp_path):
     options = svc.template_options()
     result = svc.save_template(template)
 
-    assert "Car A" in options["vehicles"]
+    assert any(item["name"] == "Car A" for item in options["vehicles"])
     assert "Spring F" in options["springs"]
     assert "Bar F" in options["antiroll_bars"]
     assert "Damper F" in options["dampers"]
     assert result["id"] == "new_demo"
     assert (svc.template_dir / "new_demo.json").exists()
+
+
+def test_vehicle_component_options_use_control_carsim_logic(monkeypatch, tmp_path):
+    svc, _ = build_service(tmp_path)
+
+    class FakeController:
+        recovered = False
+
+        def change_vehicle(self, vehicle, category):
+            self.vehicle = vehicle
+            self.category = category
+            return True
+
+        def get_crnt_spring(self, axle):
+            return ([f"{axle} Spring"], f"{axle} Current Spring")
+
+        def get_crnt_dmp(self, axle):
+            return ([f"{axle} Damper"], f"{axle} Current Damper")
+
+        def get_crnt_arb(self, axle):
+            return ([f"{axle} Bar"], f"{axle} Current Bar")
+
+        def get_crnt_simulink(self):
+            return (["Sim Model"], "Current Sim")
+
+        def recover_dataset(self):
+            FakeController.recovered = True
+
+    monkeypatch.setattr(svc, "_create_carsim_controller", lambda: FakeController())
+
+    options = svc.vehicle_component_options("Car A", "CAT")
+
+    assert "F Damper" in options["front_dampers"]
+    assert "R Damper" in options["rear_dampers"]
+    assert "F Current Spring" in options["front_springs"]
+    assert FakeController.recovered is True
 
 
 def test_execute_template_applies_setup_plots_runs_report_and_shows_panel(tmp_path):
