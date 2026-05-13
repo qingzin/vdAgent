@@ -191,10 +191,6 @@ print(json.dumps(missing, ensure_ascii=False))
 
                 car_dir = run_dir / sanitize_filename(cfg["name"])
                 car_dir.mkdir(parents=True, exist_ok=True)
-                try:
-                    controller.get_crnt_veh_param(vehicle, vehicle_cat, save_path=str(car_dir))
-                except Exception:
-                    pass
 
                 try:
                     self._apply_controller_parts(controller, cfg)
@@ -202,6 +198,11 @@ print(json.dumps(missing, ensure_ascii=False))
                     if not hasattr(exc, "workflow_stage"):
                         setattr(exc, "workflow_stage", "apply_configuration")
                     raise
+                try:
+                    controller.get_crnt_veh_param(vehicle, vehicle_cat, save_path=str(car_dir))
+                except Exception:
+                    pass
+                controller.h.GoHome()
                 self._notify(
                     progress,
                     "apply_configuration",

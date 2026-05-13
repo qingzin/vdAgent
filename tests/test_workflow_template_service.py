@@ -382,7 +382,7 @@ def test_execute_template_uses_workflow_stage_from_batch_failure(tmp_path):
     assert ctx.workflow_panel.finished[0] is False
 
 
-def test_change_procedure_enters_offline_simulation_before_bluelink(monkeypatch):
+def test_change_procedure_uses_current_run_control_context(monkeypatch):
     import types
 
     win32com = types.ModuleType("win32com")
@@ -400,14 +400,7 @@ def test_change_procedure_enters_offline_simulation_before_bluelink(monkeypatch)
     class FakeCarsimApp:
         def __init__(self):
             self.calls = []
-
-        def DataSetExists(self, lib, ds, cat):
-            self.calls.append(("exists", lib, ds, cat))
-            return True
-
-        def Gotolibrary(self, lib, ds, cat):
-            self.calls.append(("goto", lib, ds, cat))
-            self.current = (lib, ds, cat)
+            self.current = ("CarSim Run Control", "OfflineSimulation", "*AutoOfflineSimulation")
 
         def GetCurrentLibInfo(self):
             return self.current
@@ -425,8 +418,8 @@ def test_change_procedure_enters_offline_simulation_before_bluelink(monkeypatch)
     controller.restore_stack = []
 
     assert controller.change_procedure("Central Steer") is False
-    assert ("goto", "CarSim Run Control", "OfflineSimulation", "*AutoOfflineSimulation") in controller.h.calls
-    assert controller.h.calls.index(("goto", "CarSim Run Control", "OfflineSimulation", "*AutoOfflineSimulation")) < controller.h.calls.index(("set", "#BlueLink28", "Procedures", "Central Steer", "Standard_0122"))
+    assert ("set", "#BlueLink28", "Procedures", "Central Steer", "Standard_0122") in controller.h.calls
+    assert not any(call[0] == "goto" for call in controller.h.calls)
 
 
 def test_report_environment_uses_configured_python311_for_report_deps(monkeypatch, tmp_path):
@@ -467,26 +460,33 @@ def test_report_batch_restores_carsim_after_run(monkeypatch, tmp_path):
     class FakeController:
         restored = False
         damper_calls = []
+        calls = []
+
+        def __init__(self):
+            self.h = SimpleNamespace(GoHome=lambda: FakeController.calls.append("go_home"))
 
         def create_test_dataset(self):
-            pass
+            FakeController.calls.append("create_test_dataset")
 
         def change_vehicle(self, vehicle, category):
+            FakeController.calls.append("change_vehicle")
             return True
 
         def get_crnt_veh_param(self, *args, **kwargs):
-            pass
+            FakeController.calls.append("get_crnt_veh_param")
 
         def change_crnt_spring(self, *args):
-            pass
+            FakeController.calls.append("change_crnt_spring")
 
         def change_crnt_arb(self, *args):
-            pass
+            FakeController.calls.append("change_crnt_arb")
 
         def change_crnt_dmp(self, *args):
+            FakeController.calls.append("change_crnt_dmp")
             FakeController.damper_calls.append(args)
 
         def change_procedure(self, proc):
+            FakeController.calls.append("change_procedure")
             return True
 
         def execute_simulation(self):
@@ -552,5 +552,7 @@ def test_report_batch_restores_carsim_after_run(monkeypatch, tmp_path):
     assert FakeController.restored is True
     assert ("F", "Damper F") in FakeController.damper_calls
     assert ("R", "Damper R") in FakeController.damper_calls
+    assert FakeController.calls.index("get_crnt_veh_param") < FakeController.calls.index("go_home")
+    assert FakeController.calls.index("go_home") < FakeController.calls.index("change_procedure")
     assert any(e["stage_key"] == "restore_carsim" and e["status"] == "done" for e in events)
     assert any(e["stage_key"] == "generate_report" and e["status"] == "done" for e in events)

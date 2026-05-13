@@ -961,18 +961,6 @@ class ControlCarsim():
 
             return True
 
-        run_lib = "CarSim Run Control"
-        run_ds = "OfflineSimulation"
-        run_cat = "*AutoOfflineSimulation"
-
-        if not self.h.DataSetExists(run_lib, run_ds, run_cat):
-
-            self.create_test_dataset()
-
-        else:
-
-            self.h.Gotolibrary(run_lib, run_ds, run_cat)
-
         return self.safe_change_bluelink('#BlueLink28', proc_ds, target_cat=self.proc_cate)
 
 
@@ -2061,4 +2049,3 @@ class ControlCarsim():
 
 
         shutil.move(curr_output_file, target_path)
-
