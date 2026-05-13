@@ -72,7 +72,6 @@ class WorkflowTemplateManagerPanel(QWidget):
         basic = QGroupBox("模板信息")
         basic_form = QFormLayout(basic)
         self.name_edit = QLineEdit()
-        self.name_edit.setPlaceholderText("例如：领导演示一键实验")
         self.id_edit = QLineEdit()
         self.id_edit.setPlaceholderText("可选；留空时根据模板名自动生成")
         self.description_edit = QTextEdit()
