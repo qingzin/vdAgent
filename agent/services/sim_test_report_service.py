@@ -187,7 +187,7 @@ print(json.dumps(missing, ensure_ascii=False))
                 vehicle = cfg["vehicle"]
                 vehicle_cat = cfg.get("vehicle_category") or self._resolve_vehicle_category(vehicle)
                 if not controller.change_vehicle(vehicle, vehicle_cat):
-                    raise RuntimeError(f"切换车型失败: {vehicle}")
+                    raise self._stage_error("apply_configuration", f"切换车型失败: {vehicle}")
 
                 car_dir = run_dir / sanitize_filename(cfg["name"])
                 car_dir.mkdir(parents=True, exist_ok=True)
@@ -196,7 +196,12 @@ print(json.dumps(missing, ensure_ascii=False))
                 except Exception:
                     pass
 
-                self._apply_controller_parts(controller, cfg)
+                try:
+                    self._apply_controller_parts(controller, cfg)
+                except Exception as exc:
+                    if not hasattr(exc, "workflow_stage"):
+                        setattr(exc, "workflow_stage", "apply_configuration")
+                    raise
                 self._notify(
                     progress,
                     "apply_configuration",
@@ -226,14 +231,14 @@ print(json.dumps(missing, ensure_ascii=False))
                         result_folder=str(run_dir),
                     )
                     if not controller.change_procedure(proc_ds):
-                        raise RuntimeError(f"切换工况失败: {proc_name} ({proc_ds})")
+                        raise self._stage_error("run_simulation", f"切换工况失败: {proc_name} ({proc_ds})")
                     success = controller.execute_simulation()
                     if "Step" in proc_ds:
                         controller.step_cond_check()
                     elif "Pulse" in proc_ds:
                         controller.pulse_cond_check()
                     if not success:
-                        raise RuntimeError(f"仿真失败: {cfg['name']} / {proc_name}")
+                        raise self._stage_error("run_simulation", f"仿真失败: {cfg['name']} / {proc_name}")
                     controller.rename_carsim_output_csv(str(car_dir), proc_name)
                     completed_runs += 1
                     self._notify(
@@ -388,20 +393,66 @@ print(out or "")
         return match.group(1) if match else ""
 
     def _apply_controller_parts(self, controller, cfg: dict):
-        if cfg.get("front_spring"):
-            controller.change_crnt_spring("F", cfg["front_spring"])
-        if cfg.get("rear_spring"):
-            controller.change_crnt_spring("R", cfg["rear_spring"])
-        if cfg.get("front_damper"):
-            controller.change_crnt_dmp("F", cfg["front_damper"])
-        if cfg.get("rear_damper"):
-            controller.change_crnt_dmp("R", cfg["rear_damper"])
-        if cfg.get("front_antiroll_bar"):
-            controller.change_crnt_arb("F", cfg["front_antiroll_bar"])
-        if cfg.get("rear_antiroll_bar"):
-            controller.change_crnt_arb("R", cfg["rear_antiroll_bar"])
-        if cfg.get("simulink_model"):
-            controller.change_simulink(cfg["simulink_model"])
+        self._apply_optional_part(
+            cfg,
+            "front_spring",
+            "前弹簧",
+            lambda value: controller.change_crnt_spring("F", value),
+        )
+        self._apply_optional_part(
+            cfg,
+            "rear_spring",
+            "后弹簧",
+            lambda value: controller.change_crnt_spring("R", value),
+        )
+        self._apply_optional_part(
+            cfg,
+            "front_damper",
+            "前阻尼",
+            lambda value: controller.change_crnt_dmp("F", value),
+        )
+        self._apply_optional_part(
+            cfg,
+            "rear_damper",
+            "后阻尼",
+            lambda value: controller.change_crnt_dmp("R", value),
+        )
+        self._apply_optional_part(
+            cfg,
+            "front_antiroll_bar",
+            "前稳定杆",
+            lambda value: controller.change_crnt_arb("F", value),
+        )
+        self._apply_optional_part(
+            cfg,
+            "rear_antiroll_bar",
+            "后稳定杆",
+            lambda value: controller.change_crnt_arb("R", value),
+        )
+        self._apply_optional_part(
+            cfg,
+            "simulink_model",
+            "联合仿真模型",
+            lambda value: controller.change_simulink(value),
+        )
+
+    def _apply_optional_part(self, cfg: dict, key: str, label: str, apply_func):
+        value = cfg.get(key)
+        if not self._should_apply_part(value):
+            return
+        if apply_func(value) is False:
+            raise RuntimeError(f"{label}切换失败: {value}")
+
+    def _should_apply_part(self, value) -> bool:
+        if value is None:
+            return False
+        text = str(value).strip()
+        return bool(text) and text not in {"ori", "<无可用/不适用>"}
+
+    def _stage_error(self, stage: str, message: str) -> RuntimeError:
+        err = RuntimeError(message)
+        setattr(err, "workflow_stage", stage)
+        return err
 
     def _write_model_info(self, run_dir: Path, configurations: list):
         lines = ["【各方案配置说明】"]

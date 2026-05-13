@@ -638,6 +638,7 @@ class ControlCarsim():
 
         """
 
+        ctx_lib, ctx_ds, ctx_cat = self.h.GetCurrentLibInfo()
         curr_lib, _, curr_cat, _ = self.h.GetBlueLink(bluelink_id)
 
         if curr_lib:
@@ -653,15 +654,24 @@ class ControlCarsim():
             self.h.BlueLink(bluelink_id, curr_lib, target_ds, cat_to_use)
 
 
-            _, current_dataset, _, _ = self.h.GetBlueLink(bluelink_id)
+            current_lib, current_dataset, current_cat, _ = self.h.GetBlueLink(bluelink_id)
 
-            if current_dataset != target_ds:
+            if current_dataset != target_ds or current_cat != cat_to_use:
 
-                print(f"    ❌ 链接设置不匹配：期望 {target_ds}，实际为 {current_dataset}")
+                print(
+                    f"    ❌ 链接设置不匹配：位置 {ctx_lib}/{ctx_ds}/{ctx_cat}，"
+                    f"链接 {bluelink_id}，期望 {curr_lib}/{target_ds}/{cat_to_use}，"
+                    f"实际为 {current_lib}/{current_dataset}/{current_cat}"
+                )
 
                 return False
 
             return True
+
+        print(
+            f"    ❌ 链接不可用：位置 {ctx_lib}/{ctx_ds}/{ctx_cat}，"
+            f"链接 {bluelink_id} 无法读取当前 Library"
+        )
 
         return False
 
@@ -945,14 +955,23 @@ class ControlCarsim():
 
     def change_procedure(self, proc_ds):
 
-        self.h.GoHome()
-
         if proc_ds == 'Multi-Condition':
 
             print(f"    多工况")
 
             return True
 
+        run_lib = "CarSim Run Control"
+        run_ds = "OfflineSimulation"
+        run_cat = "*AutoOfflineSimulation"
+
+        if not self.h.DataSetExists(run_lib, run_ds, run_cat):
+
+            self.create_test_dataset()
+
+        else:
+
+            self.h.Gotolibrary(run_lib, run_ds, run_cat)
 
         return self.safe_change_bluelink('#BlueLink28', proc_ds, target_cat=self.proc_cate)
 
@@ -2042,5 +2061,4 @@ class ControlCarsim():
 
 
         shutil.move(curr_output_file, target_path)
-
 

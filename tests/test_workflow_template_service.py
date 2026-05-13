@@ -1,4 +1,6 @@
 import json
+import importlib
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -338,6 +340,93 @@ def test_report_environment_reports_missing_handproc(tmp_path):
 
     assert ok is False
     assert "handproc.cp311-win_amd64.pyd" in msg
+
+
+def test_apply_controller_parts_raises_clear_error_on_failed_part(tmp_path):
+    ctx = SimpleNamespace(ui=object())
+    svc = SimTestReportService(ctx)
+    cfg = valid_template()
+
+    class FakeController:
+        def change_crnt_spring(self, *args):
+            return True
+
+        def change_crnt_dmp(self, *args):
+            return True
+
+        def change_crnt_arb(self, axle, value):
+            return False if axle == "F" else True
+
+        def change_simulink(self, value):
+            return True
+
+    with pytest.raises(RuntimeError, match="前稳定杆切换失败: Bar F"):
+        svc._apply_controller_parts(FakeController(), cfg)
+
+
+def test_execute_template_uses_workflow_stage_from_batch_failure(tmp_path):
+    svc, ctx = build_service(tmp_path)
+
+    def fail_in_apply(template, progress=None):
+        err = RuntimeError("前稳定杆切换失败: Bar F")
+        setattr(err, "workflow_stage", "apply_configuration")
+        raise err
+
+    ctx.report.run_batch_from_template = fail_in_apply
+
+    result = svc.execute("demo")
+
+    failed_events = [event for event in ctx.workflow_panel.events if event["status"] == "failed"]
+    assert "模板执行失败: 前稳定杆切换失败: Bar F" in result
+    assert failed_events[-1]["stage_key"] == "apply_configuration"
+    assert ctx.workflow_panel.finished[0] is False
+
+
+def test_change_procedure_enters_offline_simulation_before_bluelink(monkeypatch):
+    import types
+
+    win32com = types.ModuleType("win32com")
+    win32com_client = types.ModuleType("win32com.client")
+    win32com.client = win32com_client
+    monkeypatch.setitem(sys.modules, "win32com", win32com)
+    monkeypatch.setitem(sys.modules, "win32com.client", win32com_client)
+    monkeypatch.setitem(sys.modules, "pandas", types.ModuleType("pandas"))
+    fake_utils = types.ModuleType("utils")
+    fake_utils.load_configs = lambda path: {"common_config": {}}
+    monkeypatch.setitem(sys.modules, "utils", fake_utils)
+    monkeypatch.syspath_prepend(str(Path.cwd() / "sim_test_report"))
+    control_carsim = importlib.import_module("control_carsim")
+
+    class FakeCarsimApp:
+        def __init__(self):
+            self.calls = []
+
+        def DataSetExists(self, lib, ds, cat):
+            self.calls.append(("exists", lib, ds, cat))
+            return True
+
+        def Gotolibrary(self, lib, ds, cat):
+            self.calls.append(("goto", lib, ds, cat))
+            self.current = (lib, ds, cat)
+
+        def GetCurrentLibInfo(self):
+            return self.current
+
+        def GetBlueLink(self, link_id):
+            self.calls.append(("get", link_id))
+            return ("Procedures", "Old Procedure", "Standard_0122", "")
+
+        def BlueLink(self, link_id, lib, ds, cat):
+            self.calls.append(("set", link_id, lib, ds, cat))
+
+    controller = control_carsim.ControlCarsim.__new__(control_carsim.ControlCarsim)
+    controller.h = FakeCarsimApp()
+    controller.proc_cate = "Standard_0122"
+    controller.restore_stack = []
+
+    assert controller.change_procedure("Central Steer") is False
+    assert ("goto", "CarSim Run Control", "OfflineSimulation", "*AutoOfflineSimulation") in controller.h.calls
+    assert controller.h.calls.index(("goto", "CarSim Run Control", "OfflineSimulation", "*AutoOfflineSimulation")) < controller.h.calls.index(("set", "#BlueLink28", "Procedures", "Central Steer", "Standard_0122"))
 
 
 def test_report_environment_uses_configured_python311_for_report_deps(monkeypatch, tmp_path):

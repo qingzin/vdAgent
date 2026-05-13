@@ -245,7 +245,8 @@ class WorkflowTemplateService(BaseService):
             return final_msg
         except Exception as e:
             msg = f"模板执行失败: {e}"
-            self._emit(panel, current_stage, status="failed", message=str(e))
+            failed_stage = getattr(e, "workflow_stage", current_stage)
+            self._emit(panel, failed_stage, status="failed", message=str(e))
             self._panel_call(panel, "finish_workflow", False, msg, {})
             return msg
 
