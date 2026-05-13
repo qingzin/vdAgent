@@ -372,14 +372,27 @@ class WorkflowTemplateManagerPanel(QWidget):
         self.table.scrollToItem(self.table.item(row, 0))
 
     def _format_template(self, template: dict) -> str:
-        return "\n".join([
+        lines = [
             f"模板: {template['name']}",
             f"配置数量: {len(template.get('configurations', []))}",
+            "配置明细:",
+        ]
+        for cfg in template.get("configurations", []):
+            lines.extend([
+                f"- {cfg.get('name', '')}",
+                f"  车型: {cfg.get('vehicle', '')}",
+                f"  前/后弹簧: {cfg.get('front_spring', '')} / {cfg.get('rear_spring', '')}",
+                f"  前/后阻尼: {cfg.get('front_damper', '')} / {cfg.get('rear_damper', '')}",
+                f"  前/后稳定杆: {cfg.get('front_antiroll_bar', '')} / {cfg.get('rear_antiroll_bar', '')}",
+                f"  Simulink: {cfg.get('simulink_model', '')}",
+            ])
+        lines.extend([
             f"工况: {', '.join(template['procedures'])}",
             f"波形: {', '.join(template['plot_channels'])}",
             f"报告: {'生成' if template['report']['enabled'] else '不生成'}",
             f"执行后恢复 CarSim: {'是' if not template['keep_final_configuration'] else '否'}",
         ])
+        return "\n".join(lines)
 
     def _load_vehicle_tree(self, vehicles: list):
         self.vehicle_tree.clear()

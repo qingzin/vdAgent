@@ -183,6 +183,9 @@ def test_template_preview_contains_confirmation_risk_summary(tmp_path):
 
     assert "一键实验模板: Demo (demo)" in summary
     assert "配置数量: 1" in summary
+    assert "车型: Car A" in summary
+    assert "前/后弹簧: Spring F / Spring R" in summary
+    assert "前/后稳定杆: Bar F / Bar R" in summary
     assert "工况数量: 2" in summary
     assert "阻尼配置: Demo: 前[Damper F] / 后[Damper R]" in summary
     assert "执行后恢复 CarSim 配置: 是" in summary
@@ -337,7 +340,7 @@ def test_report_environment_uses_configured_python311_for_report_deps(monkeypatc
         }),
         encoding="utf-8",
     )
-    monkeypatch.setattr(sys := __import__("sys"), "version_info", (3, 10, 0))
+    monkeypatch.setattr(sys := __import__("sys"), "version_info", (3, 11, 0))
     monkeypatch.setattr(svc, "_missing_imports", lambda imports: [])
     checked = {}
 

@@ -166,6 +166,8 @@ class WorkflowTemplateService(BaseService):
             f"一键实验模板: {template['name']} ({template['id']})",
             f"说明: {template.get('description', '')}",
             f"配置数量: {len(configurations)}",
+            "配置明细:",
+            *self._format_configuration_lines(configurations),
             f"工况数量: {len(procedures)}，工况: {', '.join(procedures)}",
             f"阻尼配置: {self._format_damper_summary(configurations)}",
             f"波形通道: {', '.join(template.get('plot_channels', []))}",
@@ -400,6 +402,19 @@ class WorkflowTemplateService(BaseService):
                 f"前[{cfg.get('front_damper', '')}] / 后[{cfg.get('rear_damper', '')}]"
             )
         return "; ".join(parts)
+
+    def _format_configuration_lines(self, configurations: list) -> list[str]:
+        lines = []
+        for cfg in configurations:
+            lines.extend([
+                f"- {cfg.get('name', cfg.get('vehicle', '配置'))}",
+                f"  车型: {cfg.get('vehicle', '')}",
+                f"  前/后弹簧: {cfg.get('front_spring', '')} / {cfg.get('rear_spring', '')}",
+                f"  前/后阻尼: {cfg.get('front_damper', '')} / {cfg.get('rear_damper', '')}",
+                f"  前/后稳定杆: {cfg.get('front_antiroll_bar', '')} / {cfg.get('rear_antiroll_bar', '')}",
+                f"  Simulink: {cfg.get('simulink_model', '')}",
+            ])
+        return lines
 
     def _read(self, path: Path) -> dict:
         return json.loads(path.read_text(encoding="utf-8"))

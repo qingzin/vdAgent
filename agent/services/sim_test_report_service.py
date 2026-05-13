@@ -60,23 +60,30 @@ class SimTestReportService(BaseService):
 
     def check_environment(self, require_handproc=True) -> tuple[bool, str]:
         cfg = self.runtime_config()
-        missing = self._missing_imports(self.BATCH_IMPORTS)
+        missing = []
+        batch_missing = self._missing_imports(self.BATCH_IMPORTS)
+        if batch_missing:
+            missing.append(f"主程序 Python({sys.executable}) 缺少: {', '.join(batch_missing)}")
         handproc_dir = Path(cfg.get("handproc_dir") or "")
         handproc_file = handproc_dir / "handproc.cp311-win_amd64.pyd"
         if require_handproc and not handproc_file.exists():
             missing.append(f"handproc.cp311-win_amd64.pyd ({handproc_dir})")
 
-        if require_handproc and sys.version_info[:2] == (3, 11):
-            missing.extend(self._missing_imports(self.REPORT_IMPORTS))
-        elif require_handproc and sys.version_info[:2] != (3, 11):
+        if require_handproc:
             py = cfg.get("python_executable") or ""
             if py:
-                missing.extend(self._missing_imports_in_subprocess(py, self.REPORT_IMPORTS))
+                report_missing = self._missing_imports_in_subprocess(py, self.REPORT_IMPORTS)
+                if report_missing:
+                    missing.append(f"报告 Python({py}) 缺少: {', '.join(report_missing)}")
+            elif sys.version_info[:2] == (3, 11):
+                report_missing = self._missing_imports(self.REPORT_IMPORTS)
+                if report_missing:
+                    missing.append(f"报告依赖缺少: {', '.join(report_missing)}")
             else:
                 missing.append("Python 3.11 executable (report_runtime.json: python_executable)")
 
         if missing:
-            return False, "报告/批量仿真环境缺失: " + ", ".join(missing)
+            return False, "报告/批量仿真环境缺失: " + "; ".join(missing)
         return True, "报告/批量仿真环境检查通过"
 
     def _missing_imports(self, imports: dict[str, str]) -> list[str]:
@@ -130,6 +137,8 @@ print(json.dumps(missing, ensure_ascii=False))
         if not ok:
             return msg
 
+        if self.runtime_config().get("python_executable"):
+            return self._generate_report_subprocess(result_path, selected_procedures)
         if sys.version_info[:2] == (3, 11):
             return self._generate_report_in_process(result_path, selected_procedures)
         return self._generate_report_subprocess(result_path, selected_procedures)
