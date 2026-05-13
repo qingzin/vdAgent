@@ -274,6 +274,21 @@ def test_execute_template_applies_setup_plots_runs_report_and_shows_panel(tmp_pa
     assert ctx.report.executed == "demo"
 
 
+def test_execute_template_skips_ori_parts_in_ui_preapply(tmp_path):
+    template = valid_template()
+    template["front_spring"] = "ori"
+    template["rear_antiroll_bar"] = "ori"
+    svc, ctx = build_service(tmp_path, template)
+
+    result = svc.execute("demo")
+
+    assert "模板执行完成" in result
+    assert ("front_spring", "ori") not in ctx.tuning.calls
+    assert ("bar", False, "ori") not in ctx.tuning.calls
+    assert ("rear_spring", "Spring R") in ctx.tuning.calls
+    assert ("bar", True, "Bar F") in ctx.tuning.calls
+
+
 def test_execute_template_emits_structured_stage_order(tmp_path):
     svc, ctx = build_service(tmp_path)
 

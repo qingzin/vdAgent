@@ -279,13 +279,13 @@ class WorkflowTemplateService(BaseService):
     def _apply_ui_configuration(self, cfg: dict):
         tuning = self._ctx.service("tuning")
         tuning.select_vehicle(self._resolve("vehicleInfoDic", cfg["vehicle"], "车型"))
-        if cfg.get("front_spring"):
+        if self._should_apply_part(cfg.get("front_spring")):
             tuning.set_front_left_spring(self._resolve("springInfoDic", cfg["front_spring"], "前弹簧"))
-        if cfg.get("rear_spring"):
+        if self._should_apply_part(cfg.get("rear_spring")):
             tuning.set_rear_left_spring(self._resolve("springInfoDic", cfg["rear_spring"], "后弹簧"))
-        if cfg.get("front_antiroll_bar"):
+        if self._should_apply_part(cfg.get("front_antiroll_bar")):
             tuning.set_antiroll_bar(True, self._resolve_bar(cfg["front_antiroll_bar"], "前稳定杆"))
-        if cfg.get("rear_antiroll_bar"):
+        if self._should_apply_part(cfg.get("rear_antiroll_bar")):
             tuning.set_antiroll_bar(False, self._resolve_bar(cfg["rear_antiroll_bar"], "后稳定杆"))
 
     def _apply_plot_channels(self, channels: list):
@@ -317,6 +317,9 @@ class WorkflowTemplateService(BaseService):
         if err:
             raise WorkflowTemplateError(f"{label}无法匹配: {value}。{err}")
         return resolved
+
+    def _should_apply_part(self, value: str | None) -> bool:
+        return bool(value) and str(value).strip() not in {"ori", "<无可用/不适用>"}
 
     def _configurations(self, template: dict) -> list:
         if template.get("configurations"):
