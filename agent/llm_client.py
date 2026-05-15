@@ -1,12 +1,14 @@
 """
-LLM Client - 与 llama-server 的 OpenAI 兼容 API 通信
-支持 function calling，带 fallback JSON 解析
+LLM Client - 支持本地 llama-server 和远程 API 两种模式
+兼容 OpenAI API 格式，支持 function calling，带 fallback JSON 解析
 """
 
 import json
 import requests
 import re
 from typing import Optional
+
+from agent.llm_config import LLMConfig
 
 
 class LLMResponse:
@@ -17,83 +19,101 @@ class LLMResponse:
         self.has_tool_call: bool = False
         self.tool_name: Optional[str] = None
         self.tool_params: Optional[dict] = None
+        self.tool_calls: list[dict] = []
         self.raw: Optional[dict] = None
 
 
+class ModelTurn(LLMResponse):
+    """Structured model turn returned by LLMClient."""
+
+    @property
+    def assistant_text(self) -> Optional[str]:
+        return self.text
+
+    @assistant_text.setter
+    def assistant_text(self, value: Optional[str]):
+        self.text = value
+
+
 class LLMClient:
-    def __init__(self, base_url: str = "http://127.0.0.1:8080"):
-        """
-        Args:
-            base_url: llama-server 的地址，默认 http://127.0.0.1:8080
-        """
-        self.base_url = base_url.rstrip("/")
-        self.api_url = f"{self.base_url}/v1/chat/completions"
+    """支持本地和远程两种模式的 LLM 客户端。"""
+
+    def __init__(self, config: LLMConfig = None):
+        self.config = config or LLMConfig()
 
     def check_connection(self) -> bool:
-        """检查 llama-server 是否可用"""
-        try:
-            resp = requests.get(f"{self.base_url}/health", timeout=3)
-            return resp.status_code == 200
-        except Exception:
-            return False
+        """检查 LLM 服务是否可用"""
+        if self.config.is_local:
+            try:
+                resp = requests.get(f"{self.config.local_url}/health", timeout=3)
+                return resp.status_code == 200
+            except Exception:
+                return False
+        else:
+            # 远程 API 无法简单检查，假设可用
+            return True
 
     def chat(self, messages: list, tools: list = None,
-             system: str = None, temperature: float = 0.3) -> LLMResponse:
+             system: str = None, temperature: float = 0.3) -> ModelTurn:
         """
-        发送聊天请求
-
-        Args:
-            messages: 对话历史
-            tools: function calling 的 tools 列表
-            system: 系统提示词
-            temperature: 采样温度
-
-        Returns:
-            LLMResponse 对象
+        发送聊天请求。根据 config.mode 选择本地或远程 API。
         """
         full_messages = []
         if system:
             full_messages.append({"role": "system", "content": system})
         full_messages.extend(messages)
 
-        payload = {
-            "model": "qwen2.5-coder",
-            "messages": full_messages,
-            "temperature": temperature,
-            "max_tokens": 1024,
-        }
-
-        if tools:
-            payload["tools"] = tools
-            # Qwen2.5-Coder 在 required 模式下 tool call 更可靠
-            payload["tool_choice"] = "auto"
+        if self.config.is_local:
+            api_url = f"{self.config.local_url}/v1/chat/completions"
+            headers = {"Content-Type": "application/json"}
+            model = "qwen2.5-coder"
+            payload = {
+                "model": model,
+                "messages": full_messages,
+                "temperature": temperature,
+                "max_tokens": 512,
+            }
+            if tools:
+                payload["tools"] = tools
+                payload["tool_choice"] = "auto"
+        else:
+            api_url = self.config.remote_url
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.config.remote_api_key}",
+            }
+            model = self.config.remote_model
+            payload = {
+                "model": model,
+                "messages": full_messages,
+                "temperature": temperature,
+                "max_tokens": 512,
+            }
+            if tools:
+                payload["tools"] = tools
+                payload["tool_choice"] = "auto"
 
         try:
-            resp = requests.post(
-                self.api_url,
-                json=payload,
-                timeout=60,
-                headers={"Content-Type": "application/json"}
-            )
+            resp = requests.post(api_url, json=payload, timeout=60, headers=headers)
             resp.raise_for_status()
             data = resp.json()
             return self._parse_response(data)
         except requests.exceptions.ConnectionError:
-            result = LLMResponse()
-            result.text = "无法连接到 LLM 服务，请确认 llama-server 已启动。"
+            result = ModelTurn()
+            result.text = "无法连接到 LLM 服务，请确认服务已启动。"
             return result
         except requests.exceptions.Timeout:
-            result = LLMResponse()
+            result = ModelTurn()
             result.text = "LLM 响应超时，请重试。"
             return result
         except Exception as e:
-            result = LLMResponse()
+            result = ModelTurn()
             result.text = f"LLM 通信错误：{e}"
             return result
 
-    def _parse_response(self, data: dict) -> LLMResponse:
+    def _parse_response(self, data: dict) -> ModelTurn:
         """解析 API 响应，处理正常返回和 fallback"""
-        result = LLMResponse()
+        result = ModelTurn()
         result.raw = data
 
         try:
@@ -102,16 +122,25 @@ class LLMClient:
 
             # 情况 1：标准 tool_calls 格式
             if "tool_calls" in message and message["tool_calls"]:
-                tc = message["tool_calls"][0]
-                if isinstance(tc, dict):
+                for tc in message["tool_calls"]:
+                    if not isinstance(tc, dict):
+                        continue
                     func = tc.get("function", tc)
-                    result.has_tool_call = True
-                    result.tool_name = func.get("name", "")
+                    name = func.get("name", "")
                     args = func.get("arguments", "{}")
                     if isinstance(args, str):
-                        result.tool_params = json.loads(args)
+                        parsed_args = json.loads(args)
                     else:
-                        result.tool_params = args
+                        parsed_args = args
+                    result.tool_calls.append({
+                        "name": name,
+                        "arguments": parsed_args,
+                    })
+                if result.tool_calls:
+                    first = result.tool_calls[0]
+                    result.has_tool_call = True
+                    result.tool_name = first["name"]
+                    result.tool_params = first["arguments"]
                     return result
 
             # 情况 2：模型把 tool call 输出为纯文本（Qwen2.5-Coder 的已知问题）
@@ -119,6 +148,7 @@ class LLMClient:
             if content:
                 parsed = self._try_parse_tool_call_from_text(content)
                 if parsed:
+                    result.tool_calls.append(parsed)
                     result.has_tool_call = True
                     result.tool_name = parsed["name"]
                     result.tool_params = parsed["arguments"]

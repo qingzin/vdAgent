@@ -1,0 +1,24 @@
+{
+  "id": "leader_demo",
+  "name": "领导演示一键实验",
+  "description": "演示 agent 自动完成车辆配置、批量 CarSim 仿真、指标后处理和 Word 报告生成。",
+  "vehicle": "请替换为实际车型 Dataset 名称",
+  "vehicle_category": "",
+  "front_spring": "请替换为前弹簧 Dataset 名称",
+  "rear_spring": "请替换为后弹簧 Dataset 名称",
+  "front_damper": "请替换为前阻尼 Dataset 名称",
+  "rear_damper": "请替换为后阻尼 Dataset 名称",
+  "front_antiroll_bar": "请替换为前稳定杆 Dataset 名称",
+  "rear_antiroll_bar": "请替换为后稳定杆 Dataset 名称",
+  "simulink_model": "",
+  "procedures": [
+    "角阶跃",
+    "0.3g角脉冲",
+    "稳态回转",
+    "中心区"
+  ],
+  "report": {
+    "enabled": true
+  },
+  "keep_final_configuration": false
+}
