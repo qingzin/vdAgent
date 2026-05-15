@@ -16,21 +16,8 @@ from agent.services.workflow_template_service import (
 import agent.services.sim_test_report_service as sim_report_module
 
 
-class FakeSwitch:
-    def __init__(self):
-        self.checked = None
-
-    def setChecked(self, value):
-        self.checked = value
-
-
 class FakeUi:
-    def __init__(self):
-        self.plot_switches = {"roll": FakeSwitch(), "pitch": FakeSwitch()}
-        self.plot_layout_updated = False
-
-    def update_plot_layout(self):
-        self.plot_layout_updated = True
+    pass
 
 
 class FakeTuningService:
@@ -159,7 +146,6 @@ def valid_template():
         "front_antiroll_bar": "Bar F",
         "rear_antiroll_bar": "Bar R",
         "procedures": ["角阶跃", "稳态回转"],
-        "plot_channels": ["roll", "pitch"],
         "report": {"enabled": True},
         "keep_final_configuration": False,
     }
@@ -194,13 +180,12 @@ def test_template_preview_contains_confirmation_risk_summary(tmp_path):
     assert "风险: 将切换车型和悬架配置" in summary
 
 
-def test_unknown_plot_channel_is_rejected(tmp_path):
+def test_template_without_display_channels_is_valid(tmp_path):
     template = valid_template()
-    template["plot_channels"] = ["not_a_channel"]
+
     svc, _ = build_service(tmp_path, template)
 
-    with pytest.raises(WorkflowTemplateError, match="未知波形通道"):
-        svc.load_template("demo")
+    assert svc.load_template("demo")["id"] == "demo"
 
 
 def test_template_options_and_save_template(tmp_path):
@@ -256,7 +241,7 @@ def test_vehicle_component_options_use_control_carsim_logic(monkeypatch, tmp_pat
     assert FakeController.recovered is True
 
 
-def test_execute_template_applies_setup_plots_runs_report_and_shows_panel(tmp_path):
+def test_execute_template_applies_setup_runs_report_and_shows_panel(tmp_path):
     svc, ctx = build_service(tmp_path)
 
     result = svc.execute("demo")
@@ -270,9 +255,6 @@ def test_execute_template_applies_setup_plots_runs_report_and_shows_panel(tmp_pa
         ("bar", True, "Bar F"),
         ("bar", False, "Bar R"),
     ]
-    assert ctx.ui.plot_switches["roll"].checked is True
-    assert ctx.ui.plot_switches["pitch"].checked is True
-    assert ctx.ui.plot_layout_updated is True
     assert ctx.report.executed == "demo"
 
 
@@ -304,7 +286,6 @@ def test_execute_template_emits_structured_stage_order(tmp_path):
         "apply_configuration",
         "apply_configuration",
     ]
-    assert "set_plots" in keys
     assert "run_simulation" in keys
     assert "restore_carsim" in keys
     assert "generate_report" in keys

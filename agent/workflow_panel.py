@@ -32,7 +32,6 @@ class WorkflowPanel(QWidget):
         ("load_template", "加载模板"),
         ("validate_environment", "环境校验"),
         ("apply_configuration", "应用配置"),
-        ("set_plots", "设置波形"),
         ("run_simulation", "执行仿真"),
         ("restore_carsim", "恢复 CarSim"),
         ("generate_report", "生成报告"),
@@ -240,7 +239,6 @@ class WorkflowPanel(QWidget):
         lines.extend([
             "",
             f"工况列表: {', '.join(procedures)}",
-            f"波形通道: {', '.join(template.get('plot_channels', []))}",
             f"输出目录: {self.last_result.get('result_folder', '执行后生成')}",
             f"报告路径: {self.last_result.get('report_path', '执行后生成')}",
         ])
@@ -297,7 +295,6 @@ class WorkflowPanel(QWidget):
             "环境校验": "validate_environment",
             "应用车辆配置": "apply_configuration",
             "配置车辆": "apply_configuration",
-            "设置波形显示": "set_plots",
             "执行仿真": "run_simulation",
             "恢复CarSim": "restore_carsim",
             "恢复 CarSim": "restore_carsim",

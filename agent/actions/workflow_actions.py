@@ -55,7 +55,7 @@ def register(registry, ctx):
 
     registry.register(
         name="run_workflow_template",
-        description="按 JSON 模板一键完成车辆配置、波形显示、批量 CarSim 仿真、后处理和报告生成。",
+        description="按 JSON 模板一键完成车辆配置、批量 CarSim 仿真、后处理和报告生成。",
         params_schema={
             "type": "object",
             "properties": {

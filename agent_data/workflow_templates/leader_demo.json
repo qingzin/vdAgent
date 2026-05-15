@@ -1,7 +1,7 @@
 {
   "id": "leader_demo",
   "name": "领导演示一键实验",
-  "description": "演示 agent 自动完成车辆配置、波形展示、批量 CarSim 仿真、指标后处理和 Word 报告生成。",
+  "description": "演示 agent 自动完成车辆配置、批量 CarSim 仿真、指标后处理和 Word 报告生成。",
   "vehicle": "请替换为实际车型 Dataset 名称",
   "vehicle_category": "",
   "front_spring": "请替换为前弹簧 Dataset 名称",
@@ -16,13 +16,6 @@
     "0.3g角脉冲",
     "稳态回转",
     "中心区"
-  ],
-  "plot_channels": [
-    "roll",
-    "pitch",
-    "yaw",
-    "steering_angle",
-    "acc_y"
   ],
   "report": {
     "enabled": true

@@ -54,7 +54,6 @@ class WorkflowTemplateManagerPanel(QWidget):
         super().__init__(parent)
         self._ctx = ctx
         self._workflow = ctx.service("workflow_template")
-        self._plot_checks: dict[str, QCheckBox] = {}
         self._proc_checks: list[QCheckBox] = []
         self._vehicle_items: list[QTreeWidgetItem] = []
         self._init_ui()
@@ -156,7 +155,7 @@ class WorkflowTemplateManagerPanel(QWidget):
         return group
 
     def _build_workflow_panel(self):
-        group = QGroupBox("3. 工况与波形")
+        group = QGroupBox("3. 工况选择")
         layout = QVBoxLayout(group)
         self.proc_select_all = QCheckBox("全选工况")
         self.proc_select_all.stateChanged.connect(self._toggle_all_procedures)
@@ -167,13 +166,6 @@ class WorkflowTemplateManagerPanel(QWidget):
         self.proc_layout = QVBoxLayout(self.proc_widget)
         self.proc_box.setWidget(self.proc_widget)
         layout.addWidget(self.proc_box, 1)
-        self.plot_box = QScrollArea()
-        self.plot_box.setWidgetResizable(True)
-        self.plot_widget = QWidget()
-        self.plot_layout = QVBoxLayout(self.plot_widget)
-        self.plot_box.setWidget(self.plot_widget)
-        layout.addWidget(QLabel("波形通道"))
-        layout.addWidget(self.plot_box, 1)
         self.report_check = QCheckBox("生成报告")
         self.report_check.setChecked(True)
         self.restore_check = QCheckBox("执行后恢复 CarSim")
@@ -202,7 +194,6 @@ class WorkflowTemplateManagerPanel(QWidget):
         options = self._workflow.template_options()
         self._load_vehicle_tree(options.get("vehicles", []))
         self._load_procedures(options.get("procedures", []))
-        self._load_plot_channels(options.get("plot_channels", []))
         self._process_events()
 
     def on_vehicle_clicked(self, item, _col):
@@ -315,9 +306,6 @@ class WorkflowTemplateManagerPanel(QWidget):
         procedures = [cb.text() for cb in self._proc_checks if cb.isChecked()]
         if not procedures:
             raise ValueError("请至少勾选一个工况")
-        plot_channels = [key for key, cb in self._plot_checks.items() if cb.isChecked()]
-        if not plot_channels:
-            raise ValueError("请至少勾选一个波形通道")
         first = configurations[0]
         return {
             "id": self.id_edit.text().strip(),
@@ -334,7 +322,6 @@ class WorkflowTemplateManagerPanel(QWidget):
             "simulink_model": first.get("simulink_model", ""),
             "configurations": configurations,
             "procedures": procedures,
-            "plot_channels": plot_channels,
             "report": {"enabled": self.report_check.isChecked()},
             "keep_final_configuration": not self.restore_check.isChecked(),
         }
@@ -387,7 +374,6 @@ class WorkflowTemplateManagerPanel(QWidget):
             ])
         lines.extend([
             f"工况: {', '.join(template['procedures'])}",
-            f"波形: {', '.join(template['plot_channels'])}",
             f"报告: {'生成' if template['report']['enabled'] else '不生成'}",
             f"执行后恢复 CarSim: {'是' if not template['keep_final_configuration'] else '否'}",
         ])
@@ -440,18 +426,6 @@ class WorkflowTemplateManagerPanel(QWidget):
             self.proc_layout.addWidget(cb)
             self._proc_checks.append(cb)
         self.proc_layout.addStretch()
-
-    def _load_plot_channels(self, channels: list[dict]):
-        self._clear_layout(self.plot_layout)
-        self._plot_checks = {}
-        default = {"roll", "pitch", "yaw", "steering_angle", "acc_y"}
-        for item in channels:
-            key = item["key"]
-            cb = QCheckBox(f"{key} - {item['label']}")
-            cb.setChecked(key in default)
-            self.plot_layout.addWidget(cb)
-            self._plot_checks[key] = cb
-        self.plot_layout.addStretch()
 
     def _toggle_all_procedures(self, state):
         checked = state == Qt.Checked

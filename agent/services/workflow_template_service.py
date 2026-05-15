@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any
 
 from agent.actions._helpers import fuzzy_resolve
-from agent.actions.plot_actions import PLOT_CHANNELS
 from agent.services._base import BaseService
 
 
@@ -30,7 +29,6 @@ class WorkflowTemplateService(BaseService):
         "front_antiroll_bar",
         "rear_antiroll_bar",
         "procedures",
-        "plot_channels",
         "report",
         "keep_final_configuration",
     }
@@ -39,7 +37,6 @@ class WorkflowTemplateService(BaseService):
         "load_template": "加载模板",
         "validate_environment": "环境校验",
         "apply_configuration": "应用配置",
-        "set_plots": "设置波形",
         "run_simulation": "执行仿真",
         "restore_carsim": "恢复 CarSim",
         "generate_report": "生成报告",
@@ -79,10 +76,6 @@ class WorkflowTemplateService(BaseService):
             }),
             "dampers": self._damper_options(),
             "procedures": self._ctx.service("sim_test_report").available_procedures(),
-            "plot_channels": [
-                {"key": key, "label": label}
-                for key, label in PLOT_CHANNELS.items()
-            ],
         }
 
     def vehicle_options(self) -> list[dict]:
@@ -170,7 +163,6 @@ class WorkflowTemplateService(BaseService):
             *self._format_configuration_lines(configurations),
             f"工况数量: {len(procedures)}，工况: {', '.join(procedures)}",
             f"阻尼配置: {self._format_damper_summary(configurations)}",
-            f"波形通道: {', '.join(template.get('plot_channels', []))}",
             f"预计输出目录: {output_root}\\<时间戳>",
             f"报告生成: {'开启' if report_enabled else '关闭'}",
             f"执行后恢复 CarSim 配置: {'否，保留最终配置' if template.get('keep_final_configuration') else '是'}",
@@ -219,12 +211,6 @@ class WorkflowTemplateService(BaseService):
                 self._apply_ui_configuration(cfg)
             self._emit(panel, current_stage, status="done", message="车辆配置已应用", progress=38)
 
-            current_stage = "set_plots"
-            channels = template.get("plot_channels", [])
-            self._emit(panel, current_stage, status="running", message=", ".join(channels), progress=42)
-            self._apply_plot_channels(channels)
-            self._emit(panel, current_stage, status="done", message="波形通道已显示", progress=45)
-
             current_stage = "run_simulation"
             self._emit(panel, current_stage, status="running", message="开始批量仿真", progress=50)
 
@@ -257,8 +243,6 @@ class WorkflowTemplateService(BaseService):
 
         if not isinstance(template.get("procedures"), list) or not template["procedures"]:
             raise WorkflowTemplateError("procedures 必须是非空列表")
-        if not isinstance(template.get("plot_channels"), list):
-            raise WorkflowTemplateError("plot_channels 必须是列表")
         if not isinstance(template.get("report"), dict) or "enabled" not in template["report"]:
             raise WorkflowTemplateError("report.enabled 必须声明")
         if not isinstance(template.get("keep_final_configuration"), bool):
@@ -268,10 +252,6 @@ class WorkflowTemplateService(BaseService):
         unknown_procs = [p for p in template["procedures"] if p not in available]
         if unknown_procs:
             raise WorkflowTemplateError(f"未知工况: {', '.join(unknown_procs)}")
-
-        unknown_channels = [c for c in template["plot_channels"] if c not in PLOT_CHANNELS]
-        if unknown_channels:
-            raise WorkflowTemplateError(f"未知波形通道: {', '.join(unknown_channels)}")
 
         for cfg in self._configurations(template):
             if not cfg.get("vehicle"):
@@ -288,18 +268,6 @@ class WorkflowTemplateService(BaseService):
             tuning.set_antiroll_bar(True, self._resolve_bar(cfg["front_antiroll_bar"], "前稳定杆"))
         if self._should_apply_part(cfg.get("rear_antiroll_bar")):
             tuning.set_antiroll_bar(False, self._resolve_bar(cfg["rear_antiroll_bar"], "后稳定杆"))
-
-    def _apply_plot_channels(self, channels: list):
-        ui = self._ui
-        if not hasattr(ui, "plot_switches"):
-            return
-        for switch in ui.plot_switches.values():
-            switch.setChecked(False)
-        for channel in channels:
-            if channel in ui.plot_switches:
-                ui.plot_switches[channel].setChecked(True)
-        if hasattr(ui, "update_plot_layout"):
-            ui.update_plot_layout()
 
     def _resolve(self, dict_name: str, value: str, label: str) -> str:
         values = list(self._ctx.mod(dict_name, {}).keys())
@@ -479,7 +447,6 @@ class WorkflowTemplateService(BaseService):
             "配置车辆": "apply_configuration",
             "应用车辆配置": "apply_configuration",
             "校验环境": "validate_environment",
-            "设置波形显示": "set_plots",
             "恢复CarSim": "restore_carsim",
         }
         return aliases.get(title, "run_simulation")

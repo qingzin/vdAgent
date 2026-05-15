@@ -32,7 +32,6 @@ def template():
         "front_antiroll_bar": "Bar F",
         "rear_antiroll_bar": "Bar R",
         "procedures": ["角阶跃", "稳态回转"],
-        "plot_channels": ["roll", "pitch"],
         "report": {"enabled": True},
         "keep_final_configuration": False,
     }
